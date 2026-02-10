@@ -1,4 +1,5 @@
 const log = require("electron-log");
+const moment = require("moment-timezone");
 const ayalaService = require("../services/ayala.service");
 const { validationResult } = require("express-validator");
 
@@ -8,7 +9,7 @@ const { validationResult } = require("express-validator");
 class AyalaController {
   /**
    * Returns the status of the server.
-   * 
+   *
    * @param {import('express').Request} req - Express request object.
    * @param {import('express').Response} res - Express response object.
    */
@@ -16,13 +17,13 @@ class AyalaController {
     res.json({
       status: "Server is running",
       bridge: "ayala-bridge",
-      version: "1.0.0",
+      version: "1.1.0",
     });
   }
 
   /**
    * Processes the End of Day report request.
-   * 
+   *
    * @param {import('express').Request} req - Express request object.
    * @param {import('express').Response} res - Express response object.
    */
@@ -45,13 +46,15 @@ class AyalaController {
           .json({ error: "CCCODE and TRN_DATE are required" });
       }
 
-      const dt = new Date(trnDate);
-      if (isNaN(dt.getTime())) {
+      const dt = moment(trnDate);
+      if (!dt.isValid()) {
         log.error(`[EndOfDay] Invalid TRN_DATE: ${trnDate}`);
         return res.status(400).json({ error: "Invalid TRN_DATE format" });
       }
 
-      log.info(`[EndOfDay] Request received for CCCODE: ${ccode} Date: ${trnDate}`);
+      log.info(
+        `[EndOfDay] Request received for CCCODE: ${ccode} Date: ${trnDate}`,
+      );
       const filename = ayalaService.generateEodFile(data);
       log.info(`[EndOfDay] Success: Generated ${filename}`);
 
@@ -67,7 +70,7 @@ class AyalaController {
 
   /**
    * Checks for previous EOD files.
-   * 
+   *
    * @param {import('express').Request} req - Express request object.
    * @param {import('express').Response} res - Express response object.
    */
@@ -82,9 +85,11 @@ class AyalaController {
     }
 
     try {
-      log.info(`[CheckPreviousEOD] Checking for CCCODE: ${ccode} MMDDYY: ${mmddyy}`);
+      log.info(
+        `[CheckPreviousEOD] Checking for CCCODE: ${ccode} MMDDYY: ${mmddyy}`,
+      );
       const matchingFiles = ayalaService.checkPreviousEOD(ccode, mmddyy);
-      
+
       if (matchingFiles.length > 0) {
         log.info(`[CheckPreviousEOD] Found files: ${matchingFiles.join(", ")}`);
         return res.status(200).json({ exists: true, files: matchingFiles });
@@ -100,7 +105,7 @@ class AyalaController {
 
   /**
    * Processes an individual transaction request.
-   * 
+   *
    * @param {import('express').Request} req - Express request object.
    * @param {import('express').Response} res - Express response object.
    */
@@ -118,7 +123,7 @@ class AyalaController {
       const itemsCount = data.items?.length || 0;
 
       log.info(
-        `[Transaction] Processing TRN: ${trnNo} | Gross: ${grossSales} | Items: ${itemsCount}`
+        `[Transaction] Processing TRN: ${trnNo} | Gross: ${grossSales} | Items: ${itemsCount}`,
       );
 
       const filename = ayalaService.appendTransaction(data);
