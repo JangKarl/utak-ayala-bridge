@@ -17,7 +17,7 @@ router.get("/status", ayalaController.getStatus);
 router.post(
   "/endOfDay",
   [body("data").notEmpty().withMessage("Data is required")],
-  ayalaController.handleEndOfDay
+  ayalaController.handleEndOfDay,
 );
 
 /**
@@ -33,7 +33,14 @@ router.post("/checkPreviousEOD", ayalaController.handleCheckPreviousEOD);
 router.post(
   "/transaction",
   [body("data").notEmpty().withMessage("Data is required")],
-  ayalaController.handleTransaction
+  ayalaController.handleTransaction,
 );
+
+/**
+ * Route for heartbeat health check.
+ * Devices should call this endpoint to verify connectivity to the bridge.
+ * GET /heartbeat
+ */
+router.get("/heartbeat", ayalaController.heartbeat);
 
 module.exports = router;
