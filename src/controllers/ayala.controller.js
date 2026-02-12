@@ -8,7 +8,7 @@ const { validationResult } = require("express-validator");
 class AyalaController {
   /**
    * Returns the status of the server.
-   * 
+   *
    * @param {import('express').Request} req - Express request object.
    * @param {import('express').Response} res - Express response object.
    */
@@ -22,7 +22,7 @@ class AyalaController {
 
   /**
    * Processes the End of Day report request.
-   * 
+   *
    * @param {import('express').Request} req - Express request object.
    * @param {import('express').Response} res - Express response object.
    */
@@ -51,7 +51,9 @@ class AyalaController {
         return res.status(400).json({ error: "Invalid TRN_DATE format" });
       }
 
-      log.info(`[EndOfDay] Request received for CCCODE: ${ccode} Date: ${trnDate}`);
+      log.info(
+        `[EndOfDay] Request received for CCCODE: ${ccode} Date: ${trnDate}`,
+      );
       const filename = ayalaService.generateEodFile(data);
       log.info(`[EndOfDay] Success: Generated ${filename}`);
 
@@ -67,7 +69,7 @@ class AyalaController {
 
   /**
    * Checks for previous EOD files.
-   * 
+   *
    * @param {import('express').Request} req - Express request object.
    * @param {import('express').Response} res - Express response object.
    */
@@ -82,9 +84,11 @@ class AyalaController {
     }
 
     try {
-      log.info(`[CheckPreviousEOD] Checking for CCCODE: ${ccode} MMDDYY: ${mmddyy}`);
+      log.info(
+        `[CheckPreviousEOD] Checking for CCCODE: ${ccode} MMDDYY: ${mmddyy}`,
+      );
       const matchingFiles = ayalaService.checkPreviousEOD(ccode, mmddyy);
-      
+
       if (matchingFiles.length > 0) {
         log.info(`[CheckPreviousEOD] Found files: ${matchingFiles.join(", ")}`);
         return res.status(200).json({ exists: true, files: matchingFiles });
@@ -100,7 +104,7 @@ class AyalaController {
 
   /**
    * Processes an individual transaction request.
-   * 
+   *
    * @param {import('express').Request} req - Express request object.
    * @param {import('express').Response} res - Express response object.
    */
@@ -118,7 +122,7 @@ class AyalaController {
       const itemsCount = data.items?.length || 0;
 
       log.info(
-        `[Transaction] Processing TRN: ${trnNo} | Gross: ${grossSales} | Items: ${itemsCount}`
+        `[Transaction] Processing TRN: ${trnNo} | Gross: ${grossSales} | Items: ${itemsCount}`,
       );
 
       const filename = ayalaService.appendTransaction(data);
@@ -129,6 +133,20 @@ class AyalaController {
       log.error("[Transaction] Critical Error:", error);
       res.status(500).json({ error: "Internal Server Error" });
     }
+  }
+
+  /**
+   * Returns heartbeat response for passive health monitoring.
+   * Devices should call this endpoint to verify connectivity to the bridge.
+   *
+   * @param {import('express').Request} req - Express request object.
+   * @param {import('express').Response} res - Express response object.
+   */
+  heartbeat(req, res) {
+    res.json({
+      status: "alive",
+      timestamp: new Date().toISOString(),
+    });
   }
 }
 

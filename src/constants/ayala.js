@@ -212,7 +212,7 @@ const PORT = process.env.PORT || 3800;
  * Directory where uploaded and generated CSV files are stored.
  * @type {string}
  */
-const UPLOADS_DIR = path.join(os.homedir(), ".ayala-bridge", "uploads");
+const UPLOADS_DIR = "C:\\AYALA\\tenant_api\\storage\\app\\UNPROCESSED";
 
 module.exports = {
   FILE_HEADER_FIELDS,
