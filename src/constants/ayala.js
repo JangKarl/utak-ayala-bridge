@@ -2,6 +2,12 @@ const path = require("path");
 const os = require("os");
 
 /**
+ * Default timezone for date operations
+ * @type {string}
+ */
+const TIMEZONE = process.env.TIMEZONE || "Asia/Manila";
+
+/**
  * Fields used in the header of the transaction CSV files.
  * @type {string[]}
  */
@@ -221,4 +227,5 @@ module.exports = {
   EOD_FIELDS,
   PORT,
   UPLOADS_DIR,
+  TIMEZONE,
 };

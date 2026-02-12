@@ -1,4 +1,5 @@
 const log = require("electron-log");
+const moment = require("moment-timezone");
 const ayalaService = require("../services/ayala.service");
 const { validationResult } = require("express-validator");
 
@@ -16,7 +17,7 @@ class AyalaController {
     res.json({
       status: "Server is running",
       bridge: "ayala-bridge",
-      version: "1.0.0",
+      version: "1.1.0",
     });
   }
 
@@ -45,8 +46,8 @@ class AyalaController {
           .json({ error: "CCCODE and TRN_DATE are required" });
       }
 
-      const dt = new Date(trnDate);
-      if (isNaN(dt.getTime())) {
+      const dt = moment(trnDate);
+      if (!dt.isValid()) {
         log.error(`[EndOfDay] Invalid TRN_DATE: ${trnDate}`);
         return res.status(400).json({ error: "Invalid TRN_DATE format" });
       }
