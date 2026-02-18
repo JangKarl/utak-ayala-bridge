@@ -16,15 +16,13 @@ const { formatValue } = require("../utils");
 class AyalaService {
   /**
    * Generates an End of Day (EOD) CSV file.
-   * 
+   *
    * @param {Object} data - The EOD data object.
    * @returns {string} The generated filename.
    */
   generateEodFile(data) {
     const ccode = data.CCCODE;
     const trnDate = data.TRN_DATE;
-    const terNo = (data.TER_NO || "001").toString().padStart(3, "0");
-    const eodCtr = (data.EODCTR || "1").toString().padStart(6, "0");
 
     const dt = new Date(trnDate);
     const mm = (dt.getMonth() + 1).toString().padStart(2, "0");
@@ -32,7 +30,7 @@ class AyalaService {
     const yy = dt.getFullYear().toString().slice(-2);
     const dateMMDDYY = `${mm}${dd}${yy}`;
 
-    const filename = `${ccode}${dateMMDDYY}${terNo}_${eodCtr}.csv`;
+    const filename = `EOD${ccode}${dateMMDDYY}.csv`;
     const filePath = path.join(UPLOADS_DIR, filename);
 
     let csvContent = "";
@@ -47,7 +45,7 @@ class AyalaService {
 
   /**
    * Appends transaction data to a temporary hourly draft file.
-   * 
+   *
    * @param {Object} data - The transaction data object.
    * @returns {string} The temporary filename.
    */
@@ -88,7 +86,7 @@ class AyalaService {
 
   /**
    * Checks for previous EOD files matching the criteria.
-   * 
+   *
    * @param {string} ccode - Company code.
    * @param {string} mmddyy - Date string in MMDDYY format.
    * @returns {string[]} List of matching filenames.
@@ -101,7 +99,7 @@ class AyalaService {
   /**
    * Finalizes an hourly draft file into an official Ayala format.
    * Used by the cron job.
-   * 
+   *
    * @param {string} tempFilename - The temporary filename to finalize.
    * @returns {string|null} The official filename or null if failed.
    */
@@ -109,7 +107,9 @@ class AyalaService {
     const tempPath = path.join(UPLOADS_DIR, tempFilename);
     const content = fs.readFileSync(tempPath, "utf-8");
     const lines = content.split("\n");
-    const transactionCount = lines.filter((line) => line.startsWith("CDATE,")).length;
+    const transactionCount = lines.filter((line) =>
+      line.startsWith("CDATE,"),
+    ).length;
 
     if (transactionCount === 0) {
       fs.unlinkSync(tempPath);
@@ -131,7 +131,9 @@ class AyalaService {
 
     const dt = new Date(trnDate);
     if (isNaN(dt.getTime())) {
-      throw new Error(`Invalid date pattern "${trnDate}" found in ${tempFilename}`);
+      throw new Error(
+        `Invalid date pattern "${trnDate}" found in ${tempFilename}`,
+      );
     }
     const mm = (dt.getMonth() + 1).toString().padStart(2, "0");
     const dd = dt.getDate().toString().padStart(2, "0");
@@ -150,7 +152,7 @@ class AyalaService {
 
     fs.writeFileSync(tempPath, lines.join("\n"));
     fs.renameSync(tempPath, officialPath);
-    
+
     return officialFilename;
   }
 }
