@@ -30,8 +30,8 @@ VAT_AMNT,578.57
 ```
 
 ### File Naming Conventions
-- **EOD files**: `{CCCODE}{MMDDYY}{TER_NO}_{EODCTR}.csv`
-  - Example: `ABC3212345012126001_000001.csv`
+- **EOD files**: `EOD{CCCODE}{MMDDYY}.csv`
+  - Example: `EODABC3212345012126001.csv`
 - **Transaction files**: `{CCCODE}{MMDDYY}{TER_NO}_{LAST_TRN_NO}.csv`
   - Example: `ABC3212340812260010000031.csv`
 - **Temp files** (hourly drafts): `temp_{MM}_{DD}_{YY}_hour_{H}.csv`
