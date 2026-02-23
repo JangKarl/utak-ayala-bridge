@@ -26,10 +26,10 @@ Ports and other settings can be modified in the `.env` file located in the appli
 By default, the bridge listens on port `3000`.
 
 ## Directory
-Processed CSVs and logs are stored in `C:\AYALA\tenant_api\storage\app\UNPROCESSED`.
+Processed CSVs and logs are stored in `C:\AYALA\tenant_api\storage\app\OUTGOING`.
 
 ### Migrating Existing Files
-If you have existing CSV files from a previous installation, manually copy them from the old location (`%USERPROFILE%\.ayala-bridge\uploads`) to the new directory (`C:\AYALA\tenant_api\storage\app\UNPROCESSED`).
+If you have existing CSV files from a previous installation, manually copy them from the old location (`%USERPROFILE%\.ayala-bridge\uploads`) to the new directory (`C:\AYALA\tenant_api\storage\app\OUTGOING`).
 
 ## Icon Requirements
 For a production-ready Windows installer, your `assets/icon.ico` must:
