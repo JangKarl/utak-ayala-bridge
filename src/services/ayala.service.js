@@ -97,6 +97,66 @@ class AyalaService {
   }
 
   /**
+   * Finalizes all pending temporary files for a specific date.
+   * Called by EOD endpoint to ensure all transactions are properly finalized.
+   *
+   * @param {string} trnDate - Transaction date (YYYY-MM-DD format).
+   * @returns {string[]} Array of finalized filenames.
+   * @throws {Error} If finalization of any temp file fails.
+   */
+  finalizeAllTempFilesForDate(trnDate) {
+    const dt = new Date(trnDate);
+    const mm = (dt.getMonth() + 1).toString().padStart(2, "0");
+    const dd = dt.getDate().toString().padStart(2, "0");
+    const yy = dt.getFullYear().toString().slice(-2);
+
+    const datePattern = `${mm}_${dd}_${yy}`;
+    const tempFileRegex = new RegExp(`^temp_${datePattern}_hour_\\d+\\.csv$`);
+
+    log.info(
+      `[FinalizeTempFiles] Scanning for temp files matching date: ${datePattern}`,
+    );
+
+    const files = fs.readdirSync(UPLOADS_DIR);
+    const tempFiles = files.filter((file) => tempFileRegex.test(file));
+
+    if (tempFiles.length === 0) {
+      log.info(
+        `[FinalizeTempFiles] No pending temp files found for ${trnDate}`,
+      );
+      return [];
+    }
+
+    log.info(
+      `[FinalizeTempFiles] Found ${tempFiles.length} temp file(s) to finalize`,
+    );
+    const finalizedFiles = [];
+
+    for (const tempFile of tempFiles) {
+      try {
+        log.info(`[FinalizeTempFiles] Processing: ${tempFile}`);
+        const officialFilename = this.finalizeHourlyDraft(tempFile);
+
+        if (officialFilename) {
+          log.info(
+            `[FinalizeTempFiles] Successfully finalized -> ${officialFilename}`,
+          );
+          finalizedFiles.push(officialFilename);
+        } else {
+          log.info(`[FinalizeTempFiles] Removed empty temp file: ${tempFile}`);
+        }
+      } catch (error) {
+        log.error(`[FinalizeTempFiles] Failed to finalize ${tempFile}:`, error);
+        throw new Error(
+          `Failed to finalize temp file ${tempFile}: ${error.message}`,
+        );
+      }
+    }
+
+    return finalizedFiles;
+  }
+
+  /**
    * Finalizes an hourly draft file into an official Ayala format.
    * Used by the cron job.
    *

@@ -15,7 +15,7 @@ This is an Electron-based Windows application that acts as a bridge between POS 
 2. **Per-transaction mode**: Data appended to hourly temp files (`temp_MM_DD_YY_hour_H.csv`)
 3. **Cron job** ([src/jobs/ayala.job.js](../src/jobs/ayala.job.js)): Every hour at minute 0, finalizes previous hour's temp file
 4. **EOD mode**: Direct generation of end-of-day summary files
-5. All files stored in `C:\AYALA\tenant_api\storage\app\UNPROCESSED`
+5. All files stored in `C:\AYALA\tenant_api\storage\app\OUTGOING`
 
 ## Critical CSV Format (Unique to This Project)
 

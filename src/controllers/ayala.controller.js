@@ -54,6 +54,27 @@ class AyalaController {
       log.info(
         `[EndOfDay] Request received for CCCODE: ${ccode} Date: ${trnDate}`,
       );
+
+      // Finalize any pending temp files before generating EOD
+      try {
+        const finalizedFiles =
+          ayalaService.finalizeAllTempFilesForDate(trnDate);
+        if (finalizedFiles.length > 0) {
+          log.info(
+            `[EndOfDay] Finalized ${finalizedFiles.length} pending temp file(s)`,
+          );
+        }
+      } catch (finalizationError) {
+        log.error(
+          `[EndOfDay] Temp file finalization failed:`,
+          finalizationError,
+        );
+        return res.status(500).json({
+          error: "Failed to finalize pending transaction files",
+          details: finalizationError.message,
+        });
+      }
+
       const filename = ayalaService.generateEodFile(data);
       log.info(`[EndOfDay] Success: Generated ${filename}`);
 
