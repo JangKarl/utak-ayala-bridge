@@ -157,6 +157,38 @@ class AyalaController {
   }
 
   /**
+   * Processes consolidated hourly transactions.
+   *
+   * @param {import('express').Request} req - Express request object.
+   * @param {import('express').Response} res - Express response object.
+   */
+  handleHourly(req, res) {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      log.error(`[Hourly] Validation failed:`, errors.array());
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+      const { date, hour, data } = req.body;
+
+      log.info(
+        `[Hourly] Processing ${data.length} transactions for date: ${date}, hour: ${hour}`,
+      );
+
+      const filename = ayalaService.appendHourlyTransactions(date, hour, data);
+      log.info(`[Hourly] Success: Appended to ${filename}`);
+
+      res
+        .status(200)
+        .json({ message: "Hourly transactions recorded", file: filename });
+    } catch (error) {
+      log.error("[Hourly] Critical Error:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  }
+
+  /**
    * Returns heartbeat response for passive health monitoring.
    * Devices should call this endpoint to verify connectivity to the bridge.
    *

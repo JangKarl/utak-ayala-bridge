@@ -37,6 +37,20 @@ router.post(
 );
 
 /**
+ * Route for processing consolidated hourly transactions.
+ * POST /hourly
+ */
+router.post(
+  "/hourly",
+  [
+    body("date").notEmpty().withMessage("Date is required"),
+    body("hour").notEmpty().withMessage("Hour is required"),
+    body("data").isArray().withMessage("Data must be an array"),
+  ],
+  ayalaController.handleHourly,
+);
+
+/**
  * Route for heartbeat health check.
  * Devices should call this endpoint to verify connectivity to the bridge.
  * GET /heartbeat
