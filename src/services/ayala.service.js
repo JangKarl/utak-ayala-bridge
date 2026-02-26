@@ -85,6 +85,52 @@ class AyalaService {
   }
 
   /**
+   * Appends consolidated hourly transactions to a temporary hourly draft file.
+   *
+   * @param {string} dateStr - The date string in YYMMDD format.
+   * @param {string} hour - The hour string.
+   * @param {Array} transactions - Array of transaction data objects.
+   * @returns {string} The temporary filename.
+   */
+  appendHourlyTransactions(dateStr, hour, transactions) {
+    // Parse YYMMDD to MM_DD_YY
+    const yy = dateStr.substring(0, 2);
+    const mm = dateStr.substring(2, 4);
+    const dd = dateStr.substring(4, 6);
+    const date = `${mm}_${dd}_${yy}`;
+
+    const tempFilename = `temp_${date}_hour_${hour}.csv`;
+    const tempPath = path.join(UPLOADS_DIR, tempFilename);
+
+    let rowsToAppend = "";
+
+    if (!fs.existsSync(tempPath) && transactions.length > 0) {
+      const firstData = transactions[0];
+      FILE_HEADER_FIELDS.forEach((field) => {
+        const val = field === "NO_TRN" ? "0" : firstData[field] || "";
+        rowsToAppend += `${field},${formatValue(field, val)}\n`;
+      });
+    }
+
+    transactions.forEach((data) => {
+      TRANSACTION_FIELDS.forEach((field) => {
+        const val = data[field] !== undefined ? data[field] : "";
+        rowsToAppend += `${field},${formatValue(field, val)}\n`;
+      });
+
+      (data.items || []).forEach((item) => {
+        ITEM_FIELDS.forEach((field) => {
+          const val = item[field] !== undefined ? item[field] : "";
+          rowsToAppend += `${field},${formatValue(field, val)}\n`;
+        });
+      });
+    });
+
+    fs.appendFileSync(tempPath, rowsToAppend);
+    return tempFilename;
+  }
+
+  /**
    * Checks for previous EOD files matching the criteria.
    *
    * @param {string} ccode - Company code.
