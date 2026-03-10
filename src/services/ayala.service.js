@@ -7,8 +7,13 @@ const {
   TRANSACTION_FIELDS,
   ITEM_FIELDS,
   UPLOADS_DIR,
+  TEMP_DIR,
 } = require("../constants/ayala");
 const { formatValue } = require("../utils");
+
+// Ensure required directories exist on startup
+fs.mkdirSync(TEMP_DIR, { recursive: true });
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 /**
  * Service for handling Ayala-specific file generation and operations.
@@ -51,13 +56,52 @@ class AyalaService {
    */
   appendTransaction(data) {
     const now = new Date();
-    const hour = now.getHours();
-    const date = `${(now.getMonth() + 1).toString().padStart(2, "0")}_${now
+
+    // Derive hour from TRN_TIME ("HH:MM") so the temp file bucket matches
+    // the transaction time, not the server's wall-clock hour.
+    let hour = now.getHours();
+    if (data.TRN_TIME) {
+      const parsed = parseInt(data.TRN_TIME.split(":")[0], 10);
+      if (!isNaN(parsed)) {
+        hour = parsed;
+      } else {
+        log.warn(
+          `[AppendTransaction] Invalid TRN_TIME "${data.TRN_TIME}", falling back to server hour`,
+        );
+      }
+    } else {
+      log.warn(
+        "[AppendTransaction] TRN_TIME missing from payload, falling back to server hour",
+      );
+    }
+
+    let dateSource = null;
+    if (data.TRN_DATE) {
+      const parsed = new Date(data.TRN_DATE);
+      if (!isNaN(parsed.getTime())) {
+        dateSource = parsed;
+        console.log("dateSource", dateSource);
+      } else {
+        log.warn(
+          `[AppendTransaction] Invalid TRN_DATE "${data.TRN_DATE}", falling back to server date`,
+        );
+      }
+    } else {
+      log.warn(
+        "[AppendTransaction] TRN_DATE missing from payload, falling back to server date",
+      );
+    }
+
+    if (!dateSource) {
+      dateSource = now;
+    }
+
+    const date = `${(dateSource.getMonth() + 1).toString().padStart(2, "0")}_${dateSource
       .getDate()
       .toString()
-      .padStart(2, "0")}_${now.getFullYear().toString().slice(-2)}`;
+      .padStart(2, "0")}_${dateSource.getFullYear().toString().slice(-2)}`;
     const tempFilename = `temp_${date}_hour_${hour}.csv`;
-    const tempPath = path.join(UPLOADS_DIR, tempFilename);
+    const tempPath = path.join(TEMP_DIR, tempFilename);
 
     let rowsToAppend = "";
 
@@ -100,7 +144,7 @@ class AyalaService {
     const date = `${mm}_${dd}_${yy}`;
 
     const tempFilename = `temp_${date}_hour_${hour}.csv`;
-    const tempPath = path.join(UPLOADS_DIR, tempFilename);
+    const tempPath = path.join(TEMP_DIR, tempFilename);
 
     let rowsToAppend = "";
 
@@ -163,7 +207,7 @@ class AyalaService {
       `[FinalizeTempFiles] Scanning for temp files matching date: ${datePattern}`,
     );
 
-    const files = fs.readdirSync(UPLOADS_DIR);
+    const files = fs.readdirSync(TEMP_DIR);
     const tempFiles = files.filter((file) => tempFileRegex.test(file));
 
     if (tempFiles.length === 0) {
@@ -210,7 +254,7 @@ class AyalaService {
    * @returns {string|null} The official filename or null if failed.
    */
   finalizeHourlyDraft(tempFilename) {
-    const tempPath = path.join(UPLOADS_DIR, tempFilename);
+    const tempPath = path.join(TEMP_DIR, tempFilename);
     const content = fs.readFileSync(tempPath, "utf-8");
     const lines = content.split("\n");
     const transactionCount = lines.filter((line) =>
