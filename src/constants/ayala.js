@@ -214,6 +214,12 @@ const PORT = process.env.PORT || 3800;
  */
 const UPLOADS_DIR = "C:\\AYALA\\tenant_api\\storage\\app\\OUTGOING";
 
+/**
+ * Directory where temporary hourly draft CSV files are stored.
+ * @type {string}
+ */
+const TEMP_DIR = "C:\\UTAK\\Temp";
+
 module.exports = {
   FILE_HEADER_FIELDS,
   TRANSACTION_FIELDS,
@@ -221,4 +227,5 @@ module.exports = {
   EOD_FIELDS,
   PORT,
   UPLOADS_DIR,
+  TEMP_DIR,
 };
