@@ -7,7 +7,8 @@ require("dotenv").config();
 const { PORT, UPLOADS_DIR } = require("./src/constants/ayala");
 const { getLocalIPAddress } = require("./src/utils");
 const ayalaRoutes = require("./src/routes/ayala.routes");
-const { initJobs } = require("./src/jobs/ayala.job");
+const { initJobs, restartJobs } = require("./src/jobs/ayala.job");
+const { startTimeWatcher } = require("./src/jobs/timeWatcher");
 
 // Ensure uploads directory exists in user's home (production friendly)
 if (!fs.existsSync(UPLOADS_DIR)) {
@@ -33,6 +34,14 @@ const startServer = () => {
 
     // Initialize scheduled jobs
     initJobs();
+
+    // Watch for system clock changes (e.g., manual changes during demos)
+    startTimeWatcher(() => {
+      log.info(
+        "[TimeWatcher] System clock change detected — restarting cron job.",
+      );
+      restartJobs();
+    });
   });
 };
 
@@ -40,4 +49,10 @@ if (require.main === module) {
   startServer();
 }
 
-module.exports = { startServer, getLocalIPAddress, UPLOADS_DIR, PORT };
+module.exports = {
+  startServer,
+  restartJobs,
+  getLocalIPAddress,
+  UPLOADS_DIR,
+  PORT,
+};

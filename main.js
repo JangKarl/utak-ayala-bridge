@@ -1,7 +1,13 @@
 const { app, Tray, Menu, shell, Notification } = require("electron");
 const path = require("path");
 const log = require("electron-log");
-const { startServer, getLocalIPAddress, UPLOADS_DIR, PORT } = require("./bridge");
+const {
+  startServer,
+  restartJobs,
+  getLocalIPAddress,
+  UPLOADS_DIR,
+  PORT,
+} = require("./bridge");
 
 let tray = null;
 
@@ -18,7 +24,7 @@ if (!gotTheLock) {
     if (tray) {
       new Notification({
         title: "Ayala Bridge",
-        body: "Bridge is already running in the taskbar."
+        body: "Bridge is already running in the taskbar.",
       }).show();
     }
   });
@@ -36,34 +42,49 @@ if (!gotTheLock) {
     // Create system tray
     const localIP = getLocalIPAddress();
     const iconPath = path.join(__dirname, "assets", "icon.ico");
-    
+
     try {
       if (!require("fs").existsSync(iconPath)) {
         log.warn(`Tray icon not found at ${iconPath}. Skipping tray creation.`);
       } else {
         tray = new Tray(iconPath);
         const contextMenu = Menu.buildFromTemplate([
-          { label: `Ayala Bridge v${app.getVersion()} - Running`, enabled: false },
+          {
+            label: `Ayala Bridge v${app.getVersion()} - Running`,
+            enabled: false,
+          },
           { type: "separator" },
           { label: `IP: ${localIP}`, enabled: false },
           { label: `Port: ${PORT}`, enabled: false },
           { type: "separator" },
-          { 
-            label: "Open Uploads Folder", 
-            click: () => shell.openPath(UPLOADS_DIR) 
+          {
+            label: "Open Uploads Folder",
+            click: () => shell.openPath(UPLOADS_DIR),
           },
-          { 
-            label: "View Logs", 
-            click: () => shell.openPath(path.dirname(log.transports.file.getFile().path)) 
+          {
+            label: "View Logs",
+            click: () =>
+              shell.openPath(path.dirname(log.transports.file.getFile().path)),
           },
           { type: "separator" },
-          { 
-            label: "Quit Bridge", 
+          {
+            label: "Sync Time",
+            click: () => {
+              restartJobs();
+              new Notification({
+                title: "Ayala Bridge",
+                body: "Time synced — cron job has been restarted.",
+              }).show();
+            },
+          },
+          { type: "separator" },
+          {
+            label: "Quit Bridge",
             click: () => {
               app.isQuitting = true;
               app.quit();
-            } 
-          }
+            },
+          },
         ]);
 
         tray.setToolTip("Ayala Bridge");
@@ -75,7 +96,7 @@ if (!gotTheLock) {
 
     new Notification({
       title: "Ayala Bridge Started",
-      body: `Bridge is running on http://${localIP}:${PORT}`
+      body: `Bridge is running on http://${localIP}:${PORT}`,
     }).show();
   });
 }
