@@ -5,14 +5,10 @@ const path = require("path");
 const ayalaService = require("../services/ayala.service");
 const { TEMP_DIR } = require("../constants/ayala");
 
-/**
- * Initializes and starts the background jobs.
- */
-const initJobs = () => {
-  log.info("[Cron] Initializing Ayala background jobs...");
+let cronTask = null;
 
-  // Every hour at minute 0
-  cron.schedule("0 * * * *", () => {
+const startCronJob = () => {
+  cronTask = cron.schedule("0 * * * *", () => {
     const now = new Date();
     // Target the previous hour for finalization
     const targetTime = new Date(now.getTime() - 60 * 60 * 1000);
@@ -55,4 +51,36 @@ const initJobs = () => {
   log.info("[Cron] Hourly finalization job scheduled.");
 };
 
-module.exports = { initJobs };
+/**
+ * Initializes and starts the background jobs.
+ */
+const initJobs = () => {
+  log.info("[Cron] Initializing Ayala background jobs...");
+  startCronJob();
+};
+
+/**
+ * Stops and restarts the cron job. Called when a system clock change is detected.
+ */
+const restartJobs = () => {
+  log.info("[Cron] Restarting cron job due to clock change...");
+  if (cronTask) {
+    cronTask.stop();
+    cronTask = null;
+  }
+  startCronJob();
+  log.info("[Cron] Cron job restarted successfully.");
+};
+
+/**
+ * Stops all background jobs.
+ */
+const stopJobs = () => {
+  if (cronTask) {
+    cronTask.stop();
+    cronTask = null;
+    log.info("[Cron] All jobs stopped.");
+  }
+};
+
+module.exports = { initJobs, restartJobs, stopJobs };
