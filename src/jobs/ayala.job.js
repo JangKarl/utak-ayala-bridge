@@ -18,31 +18,45 @@ const startCronJob = () => {
       .toString()
       .padStart(2, "0")}_${targetTime.getFullYear().toString().slice(-2)}`;
 
-    const tempFilename = `temp_${date}_hour_${hour}.csv`;
-    const tempPath = path.join(TEMP_DIR, tempFilename);
+    const tempFilePrefix = `temp_${date}_hour_${hour}_ter_`;
 
     log.info(
-      `[Cron] Starting hourly finalization for hour ${hour}:00 (File: ${tempFilename})`,
+      `[Cron] Starting hourly finalization for hour ${hour}:00 (prefix: ${tempFilePrefix}*)`,
     );
 
     try {
-      if (fs.existsSync(tempPath)) {
-        log.info(`[Cron] Processing draft: ${tempFilename}`);
-        const officialFilename = ayalaService.finalizeHourlyDraft(tempFilename);
+      const allFiles = fs.readdirSync(TEMP_DIR);
+      const terminalDrafts = allFiles.filter(
+        (f) => f.startsWith(tempFilePrefix) && f.endsWith(".csv"),
+      );
 
-        if (officialFilename) {
-          log.info(`[Cron] Success: Finalized ${officialFilename}`);
-        } else {
-          log.warn(
-            `[Cron] Draft ${tempFilename} was empty or invalid and has been removed.`,
-          );
-        }
+      if (terminalDrafts.length === 0) {
+        log.info(`[Cron] No draft files found for hour ${hour}, skipping.`);
       } else {
-        log.info(`[Cron] No draft file found for hour ${hour}, skipping.`);
+        for (const tempFilename of terminalDrafts) {
+          try {
+            log.info(`[Cron] Processing draft: ${tempFilename}`);
+            const officialFilename =
+              ayalaService.finalizeHourlyDraft(tempFilename);
+
+            if (officialFilename) {
+              log.info(`[Cron] Success: Finalized ${officialFilename}`);
+            } else {
+              log.warn(
+                `[Cron] Draft ${tempFilename} was empty or invalid and has been removed.`,
+              );
+            }
+          } catch (err) {
+            log.error(
+              `[Cron] Critical error during hourly finalization of ${tempFilename}:`,
+              err,
+            );
+          }
+        }
       }
     } catch (err) {
       log.error(
-        `[Cron] Critical error during hourly finalization of ${tempFilename}:`,
+        `[Cron] Critical error scanning temp directory for hour ${hour}:`,
         err,
       );
     }

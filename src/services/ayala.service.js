@@ -16,18 +16,56 @@ fs.mkdirSync(TEMP_DIR, { recursive: true });
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 /**
+ * Parses a single CSV line, respecting double-quoted fields.
+ * @param {string} line
+ * @returns {string[]}
+ */
+function _parseCsvLine(line) {
+  const result = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      current += ch;
+    } else if (ch === "," && !inQuotes) {
+      result.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+/**
  * Service for handling Ayala-specific file generation and operations.
  */
 class AyalaService {
   /**
    * Generates an End of Day (EOD) CSV file.
    *
-   * @param {Object} data - The EOD data object.
+   * Supports both single-terminal (data is an object) and multi-terminal
+   * (data is an array of objects). Multi-terminal output uses one column per
+   * terminal: FIELD,VAL_TER1,VAL_TER2,...
+   *
+   * If an EOD file for the same CCCODE+DATE already exists on disk, incoming
+   * terminals are **upserted by TER_NO**: a terminal that already appears in
+   * the file is replaced; a new terminal is appended. This allows two Utak
+   * accounts sharing one store (same CCCODE, different TER_NO) to each trigger
+   * their own EOD and have the bridge consolidate them into a single file.
+   *
+   * @param {Object|Object[]} data - EOD data object or array of per-terminal objects.
    * @returns {string} The generated filename.
    */
   generateEodFile(data) {
-    const ccode = data.CCCODE;
-    const trnDate = data.TRN_DATE;
+    const incoming = Array.isArray(data) ? data : [data];
+    const first = incoming[0];
+
+    const ccode = first.CCCODE;
+    const trnDate = first.TRN_DATE;
 
     const dt = new Date(trnDate);
     const mm = (dt.getMonth() + 1).toString().padStart(2, "0");
@@ -38,10 +76,78 @@ class AyalaService {
     const filename = `EOD${ccode}${dateMMDDYY}.csv`;
     const filePath = path.join(UPLOADS_DIR, filename);
 
+    // If a file already exists for this CCCODE+DATE, parse its terminal columns
+    // so we can upsert rather than overwrite.
+    const existingTerminals = [];
+    if (fs.existsSync(filePath)) {
+      try {
+        const existingContent = fs.readFileSync(filePath, "utf-8");
+        const lines = existingContent.split("\n").filter((l) => l.trim() !== "");
+        if (lines.length > 0) {
+          const colCount = _parseCsvLine(lines[0]).length - 1;
+          if (colCount > 0) {
+            // Build field -> [val_ter1, val_ter2, ...] map
+            const fieldMap = {};
+            for (const line of lines) {
+              const parts = _parseCsvLine(line);
+              fieldMap[parts[0]] = parts.slice(1);
+            }
+            for (let i = 0; i < colCount; i++) {
+              const termObj = {};
+              EOD_FIELDS.forEach((field) => {
+                termObj[field] =
+                  fieldMap[field] && fieldMap[field][i] !== undefined
+                    ? fieldMap[field][i]
+                    : "";
+              });
+              existingTerminals.push(termObj);
+            }
+            log.info(
+              `[GenerateEodFile] Loaded ${colCount} existing terminal(s) from ${filename}`,
+            );
+          }
+        }
+      } catch (parseErr) {
+        log.warn(
+          `[GenerateEodFile] Could not parse existing file ${filename}, will overwrite: ${parseErr.message}`,
+        );
+      }
+    }
+
+    // Upsert incoming terminals by TER_NO into the existing set
+    const merged = [...existingTerminals];
+    for (const terminal of incoming) {
+      const terNo = String(terminal.TER_NO || "").padStart(3, "0");
+      const idx = merged.findIndex(
+        (col) => String(col.TER_NO || "").padStart(3, "0") === terNo,
+      );
+      if (idx >= 0) {
+        log.info(
+          `[GenerateEodFile] Replacing existing terminal ${terNo} in ${filename}`,
+        );
+        merged[idx] = terminal;
+      } else {
+        log.info(
+          `[GenerateEodFile] Adding terminal ${terNo} to ${filename} (total: ${merged.length + 1})`,
+        );
+        merged.push(terminal);
+      }
+    }
+
+    // Keep terminals sorted by TER_NO ascending for deterministic output
+    merged.sort((a, b) => {
+      const aTer = String(a.TER_NO || "").padStart(3, "0");
+      const bTer = String(b.TER_NO || "").padStart(3, "0");
+      return aTer.localeCompare(bTer);
+    });
+
+    // Write CSV — always use the multi-column path (works for single terminal too)
     let csvContent = "";
     EOD_FIELDS.forEach((field) => {
-      const val = data[field] !== undefined ? data[field] : "";
-      csvContent += `${field},${formatValue(field, val)}\n`;
+      const vals = merged.map((d) =>
+        formatValue(field, d[field] !== undefined ? d[field] : ""),
+      );
+      csvContent += `${field},${vals.join(",")}\n`;
     });
 
     fs.writeFileSync(filePath, csvContent);
@@ -100,7 +206,8 @@ class AyalaService {
       .getDate()
       .toString()
       .padStart(2, "0")}_${dateSource.getFullYear().toString().slice(-2)}`;
-    const tempFilename = `temp_${date}_hour_${hour}.csv`;
+    const terNo = String(data.TER_NO || "1").trim().padStart(3, "0");
+    const tempFilename = `temp_${date}_hour_${hour}_ter_${terNo}.csv`;
     const tempPath = path.join(TEMP_DIR, tempFilename);
 
     let rowsToAppend = "";
@@ -142,8 +249,9 @@ class AyalaService {
     const mm = dateStr.substring(2, 4);
     const dd = dateStr.substring(4, 6);
     const date = `${mm}_${dd}_${yy}`;
+    const terNo = String((transactions[0] && transactions[0].TER_NO) || "1").trim().padStart(3, "0");
 
-    const tempFilename = `temp_${date}_hour_${hour}.csv`;
+    const tempFilename = `temp_${date}_hour_${hour}_ter_${terNo}.csv`;
     const tempPath = path.join(TEMP_DIR, tempFilename);
 
     let rowsToAppend = "";
@@ -201,7 +309,7 @@ class AyalaService {
     const yy = dt.getFullYear().toString().slice(-2);
 
     const datePattern = `${mm}_${dd}_${yy}`;
-    const tempFileRegex = new RegExp(`^temp_${datePattern}_hour_\\d+\\.csv$`);
+    const tempFileRegex = new RegExp(`^temp_${datePattern}_hour_\\d+_ter_\\d+\.csv$`);
 
     log.info(
       `[FinalizeTempFiles] Scanning for temp files matching date: ${datePattern}`,
