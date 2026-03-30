@@ -35,8 +35,9 @@ class AyalaController {
 
     try {
       const { data } = req.body;
-      const ccode = data.CCCODE;
-      const trnDate = data.TRN_DATE;
+      const first = Array.isArray(data) ? data[0] : data;
+      const ccode = first.CCCODE;
+      const trnDate = first.TRN_DATE;
 
       if (!ccode || !trnDate) {
         log.error("[EndOfDay] Missing CCCODE or TRN_DATE");
