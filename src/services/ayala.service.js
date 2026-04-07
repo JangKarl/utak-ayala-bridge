@@ -383,7 +383,7 @@ class AyalaService {
     };
 
     const ccode = extractValue("CCCODE");
-    const trnDate = extractValue("CDATE");
+    const trnDate = extractValue("TRN_DATE");
     const terNo = extractValue("TER_NO") || "001";
     const terminal = terNo.padStart(3, "0");
 
