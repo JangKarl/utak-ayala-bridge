@@ -210,9 +210,11 @@ const PORT = process.env.PORT || 3800;
 
 /**
  * Directory where uploaded and generated CSV files are stored.
+ * Can be overridden by setting process.env.UPLOADS_DIR before this module is loaded.
  * @type {string}
  */
-const UPLOADS_DIR = "C:\\AYALA\\tenant_api\\storage\\app\\OUTGOING";
+const UPLOADS_DIR =
+  process.env.UPLOADS_DIR || "C:\\AYALA\\tenant_api\\storage\\app\\OUTGOING";
 
 /**
  * Directory where temporary hourly draft CSV files are stored.

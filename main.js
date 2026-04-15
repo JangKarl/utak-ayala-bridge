@@ -1,6 +1,20 @@
-const { app, Tray, Menu, shell, Notification } = require("electron");
+const { app, Tray, Menu, shell, Notification, dialog } = require("electron");
 const path = require("path");
+const fs = require("fs");
 const log = require("electron-log");
+
+// Load persisted user config before requiring bridge (so env vars are set first)
+const configPath = path.join(app.getPath("userData"), "config.json");
+let userConfig = {};
+try {
+  userConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+} catch (_) {
+  // No config file yet — use defaults
+}
+if (userConfig.uploadsDir) {
+  process.env.UPLOADS_DIR = userConfig.uploadsDir;
+}
+
 const {
   startServer,
   restartJobs,
@@ -60,6 +74,41 @@ if (!gotTheLock) {
           {
             label: "Open Uploads Folder",
             click: () => shell.openPath(UPLOADS_DIR),
+          },
+          {
+            label: userConfig.uploadsDir
+              ? `Dir: ${userConfig.uploadsDir}`
+              : "Dir: (default)",
+            enabled: false,
+          },
+          {
+            label: "Select Directory",
+            click: async () => {
+              const result = await dialog.showOpenDialog({
+                title: "Select Uploads Directory",
+                defaultPath: UPLOADS_DIR,
+                properties: ["openDirectory"],
+              });
+              if (result.canceled || result.filePaths.length === 0) return;
+              const selectedDir = result.filePaths[0];
+              try {
+                fs.writeFileSync(
+                  configPath,
+                  JSON.stringify({ ...userConfig, uploadsDir: selectedDir }, null, 2),
+                  "utf8"
+                );
+                new Notification({
+                  title: "Ayala Bridge",
+                  body: "Uploads directory updated. Restarting to apply changes...",
+                }).show();
+                setTimeout(() => {
+                  app.relaunch();
+                  app.exit(0);
+                }, 1500);
+              } catch (err) {
+                log.error("Failed to save directory config:", err);
+              }
+            },
           },
           {
             label: "View Logs",
