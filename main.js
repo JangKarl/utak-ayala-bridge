@@ -2,6 +2,7 @@ const { app, Tray, Menu, shell, Notification, dialog } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
+const https = require("https");
 const log = require("electron-log");
 
 // Load persisted user config before requiring bridge (so env vars are set first)
@@ -27,6 +28,57 @@ const {
 let tray = null;
 let currentIP = null;
 let ipWatcherInterval = null;
+
+const CLOUD_FUNCTION_URL =
+  "https://us-central1-posfire-8d2cb.cloudfunctions.net/mall-ayala-updateBridgeIP";
+
+/**
+ * Pushes the current IP address to Firebase RTDB via the Cloud Function.
+ * Silently no-ops if email/eodPin are not yet configured.
+ */
+async function pushIPToFirebase(newIP) {
+  const { firebaseEmail, firebaseEodPin } = userConfig;
+  if (!firebaseEmail || !firebaseEodPin) return;
+
+  const payload = JSON.stringify({
+    email: firebaseEmail,
+    newIP,
+    eodPin: firebaseEodPin,
+  });
+
+  return new Promise((resolve) => {
+    const req = https.request(
+      CLOUD_FUNCTION_URL,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+        },
+      },
+      (res) => {
+        let body = "";
+        res.on("data", (chunk) => {
+          body += chunk;
+        });
+        res.on("end", () => {
+          if (res.statusCode === 200) {
+            log.info(`[Firebase Sync] IP pushed: ${newIP}`);
+          } else {
+            log.warn(`[Firebase Sync] Failed (${res.statusCode}): ${body}`);
+          }
+          resolve();
+        });
+      },
+    );
+    req.on("error", (err) => {
+      log.warn(`[Firebase Sync] Network error: ${err.message}`);
+      resolve();
+    });
+    req.write(payload);
+    req.end();
+  });
+}
 
 // Configure logging
 log.transports.file.level = "info";
@@ -55,6 +107,8 @@ autoUpdater.on("error", (err) => {
 // Builds and applies the tray context menu using the provided IP address.
 function buildAndSetTrayMenu(localIP) {
   if (!tray) return;
+  const { clipboard } = require("electron");
+
   const contextMenu = Menu.buildFromTemplate([
     {
       label: `Ayala Bridge v${app.getVersion()} - Running`,
@@ -109,17 +163,110 @@ function buildAndSetTrayMenu(localIP) {
         shell.openPath(path.dirname(log.transports.file.getFile().path)),
     },
     { type: "separator" },
+    // Firebase account sync — status label
+    {
+      label: userConfig.firebaseEmail
+        ? `Account: ${userConfig.firebaseEmail}`
+        : "Account: (not configured)",
+      enabled: false,
+    },
+    {
+      // Clipboard-paste flow: user copies email → pastes, then copies eodPin → pastes.
+      // Electron has no native text input dialog; this is the standard lightweight approach.
+      label: "Set Account…",
+      click: async () => {
+        const step1 = await dialog.showMessageBox({
+          type: "question",
+          title: "Set Account — Step 1 of 2",
+          message:
+            "Copy your UTAK account email to the clipboard, then click Paste.",
+          detail: `Current: ${userConfig.firebaseEmail || "(not set)"}`,
+          buttons: ["Paste from Clipboard", "Cancel"],
+          defaultId: 0,
+          cancelId: 1,
+        });
+        if (step1.response !== 0) return;
+
+        const email = clipboard.readText().trim();
+        if (!email || !email.includes("@")) {
+          await dialog.showMessageBox({
+            type: "error",
+            title: "Invalid Email",
+            message: `"${email}" is not a valid email address.\nCopy your email to the clipboard and try again.`,
+            buttons: ["OK"],
+          });
+          return;
+        }
+
+        const step2 = await dialog.showMessageBox({
+          type: "question",
+          title: "Set Account — Step 2 of 2",
+          message:
+            "Copy your EOD PIN to the clipboard, then click Paste.\n\n(This is the PIN set in the Ayala Settings screen of the mobile app.)",
+          buttons: ["Paste from Clipboard", "Cancel"],
+          defaultId: 0,
+          cancelId: 1,
+        });
+        if (step2.response !== 0) return;
+
+        const eodPin = clipboard.readText().trim();
+        if (!eodPin || !/^\d{4,8}$/.test(eodPin)) {
+          await dialog.showMessageBox({
+            type: "error",
+            title: "Invalid EOD PIN",
+            message: `"${eodPin}" is not a valid EOD PIN. It must be 4–8 digits.\nCopy your PIN to the clipboard and try again.`,
+            buttons: ["OK"],
+          });
+          return;
+        }
+
+        const confirm = await dialog.showMessageBox({
+          type: "question",
+          title: "Confirm Account",
+          message: `Save these credentials?\n\nEmail: ${email}\nEOD PIN: ${"•".repeat(eodPin.length)}`,
+          buttons: ["Save", "Cancel"],
+          defaultId: 0,
+          cancelId: 1,
+        });
+        if (confirm.response !== 0) return;
+
+        try {
+          userConfig = {
+            ...userConfig,
+            firebaseEmail: email,
+            firebaseEodPin: eodPin,
+          };
+          fs.writeFileSync(
+            configPath,
+            JSON.stringify(userConfig, null, 2),
+            "utf8",
+          );
+          log.info(`[Firebase Sync] Account configured: ${email}`);
+          buildAndSetTrayMenu(currentIP);
+          // Push the current IP immediately to confirm credentials work
+          await pushIPToFirebase(currentIP);
+          new Notification({
+            title: "Ayala Bridge — Account Saved",
+            body: `Linked to ${email}. The mobile app will now receive IP updates automatically.`,
+          }).show();
+        } catch (err) {
+          log.error("Failed to save account config:", err);
+        }
+      },
+    },
+    { type: "separator" },
     {
       label: "Refresh IP",
-      click: () => {
+      click: async () => {
         const newIP = getLocalIPAddress();
         if (newIP !== currentIP) {
           log.info(`IP changed (manual refresh): ${currentIP} → ${newIP}`);
           currentIP = newIP;
           buildAndSetTrayMenu(newIP);
+          await pushIPToFirebase(newIP);
           new Notification({
             title: "Ayala Bridge — IP Updated",
-            body: `New IP: http://${newIP}:${PORT}\nUpdate your POS configuration.`,
+            body: `New IP: http://${newIP}:${PORT}\nThe mobile app has been notified.`,
           }).show();
         } else {
           new Notification({
@@ -204,15 +351,16 @@ if (!gotTheLock) {
         buildAndSetTrayMenu(currentIP);
 
         // Background watcher — checks for IP changes every 30 seconds
-        ipWatcherInterval = setInterval(() => {
+        ipWatcherInterval = setInterval(async () => {
           const newIP = getLocalIPAddress();
           if (newIP !== currentIP) {
             log.info(`IP changed (auto-detected): ${currentIP} → ${newIP}`);
             currentIP = newIP;
             buildAndSetTrayMenu(newIP);
+            await pushIPToFirebase(newIP);
             new Notification({
               title: "Ayala Bridge — IP Changed",
-              body: `New IP: http://${newIP}:${PORT}\nUpdate your POS configuration.`,
+              body: `New IP: http://${newIP}:${PORT}\nThe mobile app has been notified.`,
             }).show();
           }
         }, 30000);
