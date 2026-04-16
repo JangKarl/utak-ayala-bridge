@@ -1,8 +1,13 @@
 const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
+const path = require("path");
 const log = require("electron-log");
-require("dotenv").config();
+
+// Use __dirname so .env resolves from the project root in both dev (standalone)
+// and production (where main.js has already loaded it — this becomes a no-op
+// since dotenv skips vars that are already set).
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const { PORT, UPLOADS_DIR } = require("./src/constants/ayala");
 const { getLocalIPAddress } = require("./src/utils");
