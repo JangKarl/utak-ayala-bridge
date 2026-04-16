@@ -1,4 +1,5 @@
 const { app, Tray, Menu, shell, Notification, dialog } = require("electron");
+const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
 const log = require("electron-log");
@@ -30,6 +31,26 @@ let ipWatcherInterval = null;
 // Configure logging
 log.transports.file.level = "info";
 log.info("App starting...");
+
+// Auto-updater configuration
+autoUpdater.logger = log;
+autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
+
+autoUpdater.on("update-available", (info) => {
+  log.info(`[Updater] Update available: v${info.version}`);
+});
+autoUpdater.on("update-not-available", () => {
+  log.info("[Updater] App is up to date.");
+});
+autoUpdater.on("update-downloaded", (info) => {
+  log.info(
+    `[Updater] v${info.version} downloaded — will install on next quit.`,
+  );
+});
+autoUpdater.on("error", (err) => {
+  log.error("[Updater] Error:", err.message);
+});
 
 // Builds and applies the tray context menu using the provided IP address.
 function buildAndSetTrayMenu(localIP) {
@@ -118,6 +139,14 @@ function buildAndSetTrayMenu(localIP) {
         }).show();
       },
     },
+    {
+      label: "Check for Updates",
+      click: () => {
+        autoUpdater.checkForUpdates().catch((err) => {
+          log.error("[Updater] Manual update check failed:", err.message);
+        });
+      },
+    },
     { type: "separator" },
     {
       label: "Quit Bridge",
@@ -154,6 +183,13 @@ if (!gotTheLock) {
     } catch (err) {
       log.error("Failed to start bridge server:", err);
       app.quit();
+    }
+
+    // Check for updates silently on startup
+    try {
+      autoUpdater.checkForUpdates();
+    } catch (err) {
+      log.warn("[Updater] Update check skipped:", err.message);
     }
 
     // Create system tray
