@@ -3,7 +3,16 @@ const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
 const log = require("electron-log");
-require("dotenv").config();
+
+// Resolve .env path explicitly — avoids process.cwd() issues when launched
+// via auto-start, scheduler, or shortcuts (CWD may be C:\Windows\System32).
+const envPath = app.isPackaged
+  ? path.join(path.dirname(process.execPath), ".env")
+  : path.join(__dirname, ".env");
+const dotenvResult = require("dotenv").config({ path: envPath });
+if (dotenvResult.error) {
+  log.warn(`[Config] .env not loaded from ${envPath}: ${dotenvResult.error.message}`);
+}
 
 // Load persisted user config before requiring bridge (so env vars are set first)
 const configPath = path.join(app.getPath("userData"), "config.json");
