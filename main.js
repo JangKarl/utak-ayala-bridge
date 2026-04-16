@@ -3,6 +3,7 @@ const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
 const log = require("electron-log");
+require("dotenv").config();
 
 // Load persisted user config before requiring bridge (so env vars are set first)
 const configPath = path.join(app.getPath("userData"), "config.json");
@@ -36,6 +37,11 @@ log.info("App starting...");
 autoUpdater.logger = log;
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
+if (process.env.GH_TOKEN) {
+  autoUpdater.requestHeaders = {
+    Authorization: `token ${process.env.GH_TOKEN}`,
+  };
+}
 
 autoUpdater.on("update-available", (info) => {
   log.info(`[Updater] Update available: v${info.version}`);
