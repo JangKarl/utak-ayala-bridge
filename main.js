@@ -11,7 +11,9 @@ const envPath = app.isPackaged
   : path.join(__dirname, ".env");
 const dotenvResult = require("dotenv").config({ path: envPath });
 if (dotenvResult.error) {
-  log.warn(`[Config] .env not loaded from ${envPath}: ${dotenvResult.error.message}`);
+  log.warn(
+    `[Config] .env not loaded from ${envPath}: ${dotenvResult.error.message}`,
+  );
 }
 
 // Load persisted user config before requiring bridge (so env vars are set first)
@@ -46,11 +48,9 @@ log.info("App starting...");
 autoUpdater.logger = log;
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
-if (process.env.GH_TOKEN) {
-  autoUpdater.requestHeaders = {
-    Authorization: `token ${process.env.GH_TOKEN}`,
-  };
-}
+autoUpdater.requestHeaders = {
+  Authorization: `token ${process.env.GH_TOKEN || "REMOVED_GH_TOKEN"}`,
+};
 
 autoUpdater.on("update-available", (info) => {
   log.info(`[Updater] Update available: v${info.version}`);
