@@ -48,9 +48,11 @@ log.info("App starting...");
 autoUpdater.logger = log;
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
-autoUpdater.requestHeaders = {
-  Authorization: `token ${process.env.GH_TOKEN || "REMOVED_GH_TOKEN"}`,
-};
+if (process.env.GH_TOKEN) {
+  autoUpdater.requestHeaders = {
+    Authorization: `token ${process.env.GH_TOKEN}`,
+  };
+}
 
 autoUpdater.on("update-available", (info) => {
   log.info(`[Updater] Update available: v${info.version}`);
