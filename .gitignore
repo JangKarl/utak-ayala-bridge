@@ -2,6 +2,6 @@ node_modules/
 dist/
 uploads/
 *.log
-.env
+.env*
 .DS_Store
 package-lock.json
