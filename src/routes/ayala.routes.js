@@ -57,4 +57,52 @@ router.post(
  */
 router.get("/heartbeat", ayalaController.heartbeat);
 
+/**
+ * Route for claiming the cross-terminal EOD lock.
+ * Body: { ccode, mmddyy, ter_no }
+ * POST /eod/start
+ */
+router.post(
+  "/eod/start",
+  [
+    body("ccode").notEmpty().withMessage("ccode is required"),
+    body("mmddyy")
+      .isLength({ min: 6, max: 6 })
+      .withMessage("mmddyy must be 6 characters"),
+    body("ter_no").notEmpty().withMessage("ter_no is required"),
+  ],
+  ayalaController.startEod,
+);
+
+/**
+ * Route for polling the cross-terminal EOD lock + upload state.
+ * Query: ?ccode=X&mmddyy=Y&ter_no=Z
+ * GET /eod/status
+ */
+router.get("/eod/status", ayalaController.getEodStatus);
+
+/**
+ * Route for claiming a store-wide-unique terminal number. Hard-rejects (409)
+ * when a different device already owns the requested TER_NO for the CCCODE.
+ * Body: { ccode, ter_no, device_id, uid? }
+ * POST /terminal/register
+ */
+router.post(
+  "/terminal/register",
+  [
+    body("ccode").notEmpty().withMessage("ccode is required"),
+    body("ter_no").notEmpty().withMessage("ter_no is required"),
+    body("device_id").notEmpty().withMessage("device_id is required"),
+  ],
+  ayalaController.registerTerminal,
+);
+
+/**
+ * Read-only check of whether a terminal number is free for a store. Used by
+ * the POS setup modal to pre-validate before saving.
+ * Query: ?ccode=X&ter_no=Y&device_id=Z
+ * GET /terminal/check
+ */
+router.get("/terminal/check", ayalaController.checkTerminal);
+
 module.exports = router;
