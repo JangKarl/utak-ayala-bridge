@@ -3,12 +3,14 @@ const log = require("electron-log");
 const fs = require("fs");
 const path = require("path");
 const ayalaService = require("../services/ayala.service");
+const ayalaController = require("../controllers/ayala.controller");
 const { TEMP_DIR } = require("../constants/ayala");
 
-let cronTask = null;
+let hourlyCronTask = null;
+let reprocessSweepTask = null;
 
 const startCronJob = () => {
-  cronTask = cron.schedule("0 * * * *", () => {
+  hourlyCronTask = cron.schedule("0 * * * *", () => {
     const now = new Date();
     // Target the previous hour for finalization
     const targetTime = new Date(now.getTime() - 60 * 60 * 1000);
@@ -67,12 +69,32 @@ const startCronJob = () => {
   log.info("[Cron] Hourly finalization job scheduled.");
 };
 
+const startReprocessSweepJob = () => {
+  reprocessSweepTask = cron.schedule("* * * * *", () => {
+    try {
+      const finalized = ayalaController.finalizeDueReprocesses();
+      for (const entry of finalized) {
+        log.info(
+          `[Cron] Reprocess finalized for ${entry.ccode} ${entry.mmddyy}; done=[${entry.doneTerNos.join(
+            ",",
+          )}] carriedForward=[${entry.carriedForwardTerNos.join(",")}]`,
+        );
+      }
+    } catch (err) {
+      log.error("[Cron] Critical error during reprocess sweep:", err);
+    }
+  });
+
+  log.info("[Cron] Reprocess finalize sweep scheduled.");
+};
+
 /**
  * Initializes and starts the background jobs.
  */
 const initJobs = () => {
   log.info("[Cron] Initializing Ayala background jobs...");
   startCronJob();
+  startReprocessSweepJob();
 };
 
 /**
@@ -80,11 +102,16 @@ const initJobs = () => {
  */
 const restartJobs = () => {
   log.info("[Cron] Restarting cron job due to clock change...");
-  if (cronTask) {
-    cronTask.stop();
-    cronTask = null;
+  if (hourlyCronTask) {
+    hourlyCronTask.stop();
+    hourlyCronTask = null;
+  }
+  if (reprocessSweepTask) {
+    reprocessSweepTask.stop();
+    reprocessSweepTask = null;
   }
   startCronJob();
+  startReprocessSweepJob();
   log.info("[Cron] Cron job restarted successfully.");
 };
 
@@ -92,11 +119,15 @@ const restartJobs = () => {
  * Stops all background jobs.
  */
 const stopJobs = () => {
-  if (cronTask) {
-    cronTask.stop();
-    cronTask = null;
-    log.info("[Cron] All jobs stopped.");
+  if (hourlyCronTask) {
+    hourlyCronTask.stop();
+    hourlyCronTask = null;
   }
+  if (reprocessSweepTask) {
+    reprocessSweepTask.stop();
+    reprocessSweepTask = null;
+  }
+  log.info("[Cron] All jobs stopped.");
 };
 
 module.exports = { initJobs, restartJobs, stopJobs };

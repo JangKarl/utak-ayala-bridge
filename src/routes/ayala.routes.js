@@ -9,6 +9,13 @@ const router = express.Router();
  * GET /status
  */
 router.get("/status", ayalaController.getStatus);
+router.get("/getStatus", ayalaController.getStatus);
+
+/**
+ * Route for listing registered/current POS devices.
+ * GET /devices
+ */
+router.get("/devices", ayalaController.getDevices);
 
 /**
  * Route for generating End of Day reports.
@@ -80,6 +87,24 @@ router.post(
  * GET /eod/status
  */
 router.get("/eod/status", ayalaController.getEodStatus);
+
+/**
+ * Route for raising a cross-terminal reprocess of a past day's EOD. All
+ * terminals re-submit (silently, in the background) and the bridge clean-
+ * rebuilds the consolidated file, then cascades the grand-total chain forward.
+ * Body: { ccode, mmddyy, ter_no }
+ * POST /eod/reprocess
+ */
+router.post(
+  "/eod/reprocess",
+  [
+    body("ccode").notEmpty().withMessage("ccode is required"),
+    body("mmddyy")
+      .isLength({ min: 6, max: 6 })
+      .withMessage("mmddyy must be 6 characters"),
+  ],
+  ayalaController.handleReprocess,
+);
 
 /**
  * Route for claiming a store-wide-unique terminal number. Hard-rejects (409)

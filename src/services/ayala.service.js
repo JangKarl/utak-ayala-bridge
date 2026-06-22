@@ -8,6 +8,7 @@ const {
   ITEM_FIELDS,
   UPLOADS_DIR,
   TEMP_DIR,
+  STAGING_DIR,
 } = require("../constants/ayala");
 const { formatValue } = require("../utils");
 
@@ -41,6 +42,25 @@ function _parseCsvLine(line) {
 }
 
 /**
+ * Moves a file, falling back to copy+unlink when source and destination are on
+ * different volumes. fs.renameSync throws EXDEV across drives, which can happen
+ * now that the staging area (TEMP_DIR) may sit on a different drive than an
+ * overridden UPLOADS_DIR.
+ */
+function _safeMove(from, to) {
+  try {
+    fs.renameSync(from, to);
+  } catch (err) {
+    if (err && err.code === "EXDEV") {
+      fs.copyFileSync(from, to);
+      fs.rmSync(from, { force: true });
+    } else {
+      throw err;
+    }
+  }
+}
+
+/**
  * Service for handling Ayala-specific file generation and operations.
  */
 class AyalaService {
@@ -58,9 +78,13 @@ class AyalaService {
    * their own EOD and have the bridge consolidate them into a single file.
    *
    * @param {Object|Object[]} data - EOD data object or array of per-terminal objects.
+   * @param {{ targetPath?: string }} [options] - When targetPath is supplied
+   *   (e.g. a .staging rebuild file), write/upsert there instead of the live
+   *   uploads path. The upsert baseline is read from the same target, so any
+   *   carried-forward terminal columns are preserved.
    * @returns {string} The generated filename.
    */
-  generateEodFile(data) {
+  generateEodFile(data, options = {}) {
     const incoming = Array.isArray(data) ? data : [data];
     const first = incoming[0];
 
@@ -74,7 +98,7 @@ class AyalaService {
     const dateMMDDYY = `${mm}${dd}${yy}`;
 
     const filename = `EOD${ccode}${dateMMDDYY}.csv`;
-    const filePath = path.join(UPLOADS_DIR, filename);
+    const filePath = options.targetPath || path.join(UPLOADS_DIR, filename);
 
     // If a file already exists for this CCCODE+DATE, parse its terminal columns
     // so we can upsert rather than overwrite.
@@ -150,6 +174,7 @@ class AyalaService {
       csvContent += `${field},${vals.join(",")}\n`;
     });
 
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, csvContent);
     return filename;
   }
@@ -292,6 +317,71 @@ class AyalaService {
   checkPreviousEOD(ccode, mmddyy) {
     const files = fs.readdirSync(UPLOADS_DIR);
     return files.filter((file) => file.startsWith(ccode + mmddyy));
+  }
+
+  /**
+   * Moves a terminal's official per-transaction files out of the pickup folder
+   * before a reprocess writes regenerated replacements. Call restore on any
+   * failure before the new EOD is accepted; call discard after success.
+   *
+   * @param {{ ccode: string, mmddyy: string, terNo: string }} params
+   * @returns {{ backupDir: string, prefix: string, files: Array<{ name: string, from: string, to: string }> }}
+   */
+  stageOfficialTransactionFilesForReprocess({ ccode, mmddyy, terNo }) {
+    const terminal = String(terNo || "").trim().padStart(3, "0");
+    const prefix = `${ccode}${mmddyy}${terminal}_`;
+    const backupDir = path.join(
+      STAGING_DIR,
+      `txn_${ccode}_${mmddyy}_${terminal}_${Date.now()}`,
+    );
+    const files = [];
+
+    for (const name of fs.readdirSync(UPLOADS_DIR)) {
+      if (!name.startsWith(prefix) || !name.endsWith(".csv")) continue;
+
+      const from = path.join(UPLOADS_DIR, name);
+      const to = path.join(backupDir, name);
+      fs.mkdirSync(backupDir, { recursive: true });
+      _safeMove(from, to);
+      files.push({ name, from, to });
+    }
+
+    if (files.length) {
+      log.info(
+        `[Reprocess] Staged ${files.length} transaction file(s) for ${ccode} ${mmddyy} TER ${terminal}`,
+      );
+    }
+
+    return { backupDir, prefix, files };
+  }
+
+  restoreStagedTransactionFiles(staged) {
+    if (!staged) return;
+
+    if (staged.prefix) {
+      for (const name of fs.readdirSync(UPLOADS_DIR)) {
+        if (!name.startsWith(staged.prefix) || !name.endsWith(".csv")) {
+          continue;
+        }
+        fs.rmSync(path.join(UPLOADS_DIR, name), { force: true });
+      }
+    }
+
+    if (!staged.files || staged.files.length === 0) return;
+
+    for (const file of staged.files) {
+      if (!fs.existsSync(file.to)) continue;
+      _safeMove(file.to, file.from);
+    }
+    fs.rmSync(staged.backupDir, { recursive: true, force: true });
+    log.warn(
+      `[Reprocess] Restored ${staged.files.length} staged transaction file(s) after failure`,
+    );
+  }
+
+  discardStagedTransactionFiles(staged) {
+    if (!staged || !staged.backupDir) return;
+    fs.rmSync(staged.backupDir, { recursive: true, force: true });
   }
 
   /**

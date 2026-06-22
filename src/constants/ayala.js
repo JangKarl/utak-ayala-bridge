@@ -222,6 +222,14 @@ const UPLOADS_DIR =
  */
 const TEMP_DIR = "C:\\UTAK\\Temp";
 
+/**
+ * Directory for in-progress reprocess artifacts: the staging EOD rebuild file
+ * and the temporarily backed-up per-transaction files. Lives under TEMP_DIR —
+ * NOT UPLOADS_DIR — so the mall pickup folder only ever holds final text files.
+ * @type {string}
+ */
+const STAGING_DIR = path.join(TEMP_DIR, ".staging");
+
 module.exports = {
   FILE_HEADER_FIELDS,
   TRANSACTION_FIELDS,
@@ -230,4 +238,5 @@ module.exports = {
   PORT,
   UPLOADS_DIR,
   TEMP_DIR,
+  STAGING_DIR,
 };

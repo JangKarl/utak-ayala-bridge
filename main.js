@@ -3,6 +3,7 @@ const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
 const log = require("electron-log");
+const terminalRegistryService = require("./src/services/terminalRegistry.service");
 
 // Resolve .env path explicitly — avoids process.cwd() issues when launched
 // via auto-start, scheduler, or shortcuts (CWD may be C:\Windows\System32).
@@ -72,6 +73,15 @@ autoUpdater.on("error", (err) => {
 // Builds and applies the tray context menu using the provided IP address.
 function buildAndSetTrayMenu(localIP) {
   if (!tray) return;
+  const devices = terminalRegistryService.listDevices();
+  const onlineCount = devices.filter((device) => device.online).length;
+  const deviceItems = devices.length
+    ? devices.slice(0, 12).map((device) => ({
+        label: `${device.online ? "Online" : "Offline"} | TER ${device.terNo} | ${device.deviceName} | ${device.lastSeenAtIso || "never"}`,
+        enabled: false,
+      }))
+    : [{ label: "No POS devices seen yet", enabled: false }];
+
   const contextMenu = Menu.buildFromTemplate([
     {
       label: `Ayala Bridge v${app.getVersion()} - Running`,
@@ -80,6 +90,10 @@ function buildAndSetTrayMenu(localIP) {
     { type: "separator" },
     { label: `IP: ${localIP}`, enabled: false },
     { label: `Port: ${PORT}`, enabled: false },
+    {
+      label: `Connected Devices (${onlineCount}/${devices.length})`,
+      submenu: deviceItems,
+    },
     { type: "separator" },
     {
       label: "Open Uploads Folder",
@@ -231,6 +245,8 @@ if (!gotTheLock) {
               title: "Ayala Bridge — IP Changed",
               body: `New IP: http://${newIP}:${PORT}\nUpdate your POS configuration.`,
             }).show();
+          } else {
+            buildAndSetTrayMenu(currentIP);
           }
         }, 30000);
       }

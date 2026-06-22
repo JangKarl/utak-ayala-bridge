@@ -15,14 +15,18 @@ const REGISTRY_FILE = path.join(TEMP_DIR, "terminal_registry.json");
  * overwrites the earlier terminal's column in EOD{ccode}{mmddyy}.csv and that
  * terminal's sales are silently lost (see ayala.service.generateEodFile).
  *
- * State shape: { "<ccode>": { "<ter_no>": { deviceId, uid, updatedAt } } },
- * mirrored to a JSON file under TEMP_DIR so a bridge restart preserves
- * ownership.
+ * State shape:
+ * { "<ccode>": { "<ter_no>": {
+ *   deviceId, uid, deviceName, createdAt, updatedAt, lastSeenAt
+ * } } }
+ *
+ * Mirrored to a JSON file under TEMP_DIR so a bridge restart preserves
+ * ownership and recent device presence.
  */
 class TerminalRegistryService {
   constructor() {
     /**
-     * @type {Record<string, Record<string, { deviceId: string, uid: string|null, updatedAt: number }>>}
+     * @type {Record<string, Record<string, { deviceId: string, uid: string|null, deviceName?: string|null, createdAt?: number, updatedAt: number, lastSeenAt?: number }>>}
      */
     this.registry = {};
     this._hydrate();
@@ -67,11 +71,27 @@ class TerminalRegistryService {
     return { available: sameDevice, owner };
   }
 
+  /** Returns every registered TER_NO for a CCCODE, sorted ascending. */
+  listTerNos(ccode) {
+    return Object.keys(this.registry[ccode] || {}).sort();
+  }
+
+  _cleanName(deviceName) {
+    const name = typeof deviceName === "string" ? deviceName.trim() : "";
+    return name || null;
+  }
+
   /**
    * Claims (ccode, terNo) for deviceId.
    *
    * - Free, or already owned by deviceId → { ok: true } (idempotent).
-   * - Owned by a DIFFERENT device → { ok: false, conflict: true, owner } (hard block).
+   * - Owned by a DIFFERENT device → { ok: false, conflict: true, owner } (hard block),
+   *   UNLESS force:true, in which case the number is reassigned to deviceId and
+   *   the result carries { tookOverFrom } describing the displaced owner.
+   *
+   * `force` is reserved for the explicit, human-confirmed device-setup path
+   * (POST /terminal/register). The silent backfill paths (/heartbeat, /eod/*)
+   * never pass it, so they can never quietly steal another device's terminal.
    *
    * A device re-registering releases any OTHER terNo it previously held under
    * the same ccode, so changing a device's terminal number doesn't leave a
@@ -80,18 +100,26 @@ class TerminalRegistryService {
    * Without ccode+deviceId there is no identity to enforce, so the call is a
    * best-effort success (used by the /eod/start backfill path).
    */
-  register({ ccode, terNo, deviceId, uid = null }) {
+  register({ ccode, terNo, deviceId, uid = null, deviceName = null, force = false }) {
     if (!ccode || !deviceId) {
       return { ok: true, conflict: false, owner: null, skipped: true };
     }
     const ter = this._norm(terNo);
     const existing = this.registry[ccode] && this.registry[ccode][ter];
+    const isSameDevice = !!existing && existing.deviceId === deviceId;
 
-    if (existing && existing.deviceId !== deviceId) {
+    if (existing && !isSameDevice && !force) {
       return { ok: false, conflict: true, owner: existing };
     }
 
     if (!this.registry[ccode]) this.registry[ccode] = {};
+    const now = Date.now();
+    const cleanName = this._cleanName(deviceName);
+
+    // On a forced takeover the previous owner is a DIFFERENT device, so do not
+    // inherit its uid/deviceName/createdAt — start fresh for the new owner.
+    const tookOverFrom = existing && !isSameDevice ? { ...existing } : null;
+    const base = isSameDevice ? existing : {};
 
     // Release any other terNo previously held by this device under this ccode.
     for (const key of Object.keys(this.registry[ccode])) {
@@ -100,9 +128,82 @@ class TerminalRegistryService {
       }
     }
 
-    this.registry[ccode][ter] = { deviceId, uid, updatedAt: Date.now() };
+    this.registry[ccode][ter] = {
+      ...base,
+      deviceId,
+      uid: uid || base.uid || null,
+      deviceName: cleanName || base.deviceName || null,
+      createdAt: base.createdAt || now,
+      updatedAt: now,
+      lastSeenAt: now,
+    };
     this._persist();
-    return { ok: true, conflict: false, owner: this.registry[ccode][ter] };
+    return {
+      ok: true,
+      conflict: false,
+      owner: this.registry[ccode][ter],
+      tookOverFrom,
+    };
+  }
+
+  /**
+   * Records that a known terminal is currently talking to the bridge. This is
+   * intentionally routed through register() so presence updates also keep the
+   * TER_NO uniqueness guard fresh.
+   */
+  touch({ ccode, terNo, deviceId, uid = null, deviceName = null }) {
+    return this.register({ ccode, terNo, deviceId, uid, deviceName });
+  }
+
+  /**
+   * Returns registered devices with computed online state.
+   *
+   * @param {{ ccode?: string|null, onlineWindowMs?: number }} [options]
+   */
+  listDevices(options = {}) {
+    const { ccode = null, onlineWindowMs = 60 * 1000 } = options;
+    const now = Date.now();
+    const ccodeEntries = ccode
+      ? [[ccode, this.registry[ccode] || {}]]
+      : Object.entries(this.registry);
+    const devices = [];
+
+    for (const [storeCode, terminals] of ccodeEntries) {
+      for (const [terNo, owner] of Object.entries(terminals || {})) {
+        const lastSeenAt = owner.lastSeenAt || owner.updatedAt || null;
+        const secondsSinceLastSeen = lastSeenAt
+          ? Math.max(0, Math.round((now - lastSeenAt) / 1000))
+          : null;
+        const online =
+          typeof secondsSinceLastSeen === "number" &&
+          secondsSinceLastSeen * 1000 <= onlineWindowMs;
+
+        devices.push({
+          ccode: storeCode,
+          terNo,
+          deviceId: owner.deviceId,
+          deviceName: owner.deviceName || `Terminal ${terNo}`,
+          uid: owner.uid || null,
+          createdAt: owner.createdAt || null,
+          updatedAt: owner.updatedAt || null,
+          lastSeenAt,
+          lastSeenAtIso: lastSeenAt ? new Date(lastSeenAt).toISOString() : null,
+          latestConnectionTimeIso: lastSeenAt
+            ? new Date(lastSeenAt).toISOString()
+            : null,
+          secondsSinceLastSeen,
+          online,
+        });
+      }
+    }
+
+    return devices.sort((a, b) => {
+      if (a.online !== b.online) return a.online ? -1 : 1;
+      if ((b.lastSeenAt || 0) !== (a.lastSeenAt || 0)) {
+        return (b.lastSeenAt || 0) - (a.lastSeenAt || 0);
+      }
+      return `${a.ccode}:${a.terNo}`.localeCompare(`${b.ccode}:${b.terNo}`);
+    });
   }
 }
 
