@@ -27,7 +27,7 @@
     "dev": "node -e \"require('./bridge').startServer()\"",
     "build": "electron-builder --win",
     "publish": "electron-builder --win --publish always",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test test/"
   },
   "keywords": [
     "ayala",
