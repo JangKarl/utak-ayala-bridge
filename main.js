@@ -4,6 +4,7 @@ const path = require("path");
 const fs = require("fs");
 const log = require("electron-log");
 const terminalRegistryService = require("./src/services/terminalRegistry.service");
+const reprocessStateService = require("./src/services/reprocessState.service");
 
 // Resolve .env path explicitly — avoids process.cwd() issues when launched
 // via auto-start, scheduler, or shortcuts (CWD may be C:\Windows\System32).
@@ -40,6 +41,16 @@ const {
 let tray = null;
 let currentIP = null;
 let ipWatcherInterval = null;
+let updateCheckInterval = null;
+let autoInstallInterval = null;
+let downloadedUpdate = null;
+
+// How often a long-running bridge polls GitHub for a new release. It only
+// checks on startup otherwise, so a 24/7 bridge would never see an update.
+const UPDATE_CHECK_MS = 6 * 60 * 60 * 1000; // 6 hours
+// Once an update is downloaded, how often we re-check for a safe window to
+// apply it automatically (no reprocess in flight, no terminal online).
+const AUTO_INSTALL_RETRY_MS = 15 * 60 * 1000; // 15 minutes
 
 // Configure logging
 log.transports.file.level = "info";
@@ -48,7 +59,10 @@ log.info("App starting...");
 // Auto-updater configuration
 autoUpdater.logger = log;
 autoUpdater.autoDownload = true;
-autoUpdater.autoInstallOnAppQuit = true;
+// We control WHEN the update is applied (see applyUpdateIfSafe) so an install
+// can never fire mid-EOD/reprocess. Leaving this true would let a downloaded
+// update install on ANY app quit — possibly mid-day or mid-reprocess.
+autoUpdater.autoInstallOnAppQuit = false;
 if (process.env.GH_TOKEN) {
   autoUpdater.requestHeaders = {
     Authorization: `token ${process.env.GH_TOKEN}`,
@@ -62,13 +76,94 @@ autoUpdater.on("update-not-available", () => {
   log.info("[Updater] App is up to date.");
 });
 autoUpdater.on("update-downloaded", (info) => {
+  downloadedUpdate = info;
   log.info(
-    `[Updater] v${info.version} downloaded — will install on next quit.`,
+    `[Updater] v${info.version} downloaded — will apply when the bridge is idle (no reprocess, no terminal online) or via the tray "Restart & Update".`,
   );
+  if (tray) buildAndSetTrayMenu(currentIP);
+  new Notification({
+    title: "Ayala Bridge — Update Ready",
+    body: `v${info.version} downloaded. It will install automatically when idle, or choose "Restart & Update" from the tray menu.`,
+  }).show();
+  // Poll for a safe window so a continuously-running bridge applies it without
+  // needing a manual restart.
+  if (!autoInstallInterval) {
+    autoInstallInterval = setInterval(
+      () => applyUpdateIfSafe({ manual: false }),
+      AUTO_INSTALL_RETRY_MS,
+    );
+  }
 });
 autoUpdater.on("error", (err) => {
   log.error("[Updater] Error:", err.message);
 });
+
+// True while any EOD reprocess window is still open (terminals may still be
+// re-submitting; restarting now could interrupt the staged rebuild). Fails
+// safe: if the state can't be read, treat it as busy and never install blindly.
+function isReprocessBusy() {
+  try {
+    return reprocessStateService.listPending().length > 0;
+  } catch (err) {
+    log.warn("[Updater] Could not read reprocess state:", err.message);
+    return true;
+  }
+}
+
+function onlineDeviceCount() {
+  try {
+    return terminalRegistryService.listDevices().filter((d) => d.online).length;
+  } catch (_) {
+    return 0;
+  }
+}
+
+// Applies a downloaded update ONLY when it is safe to restart the bridge.
+// Guard order matters: an install never fires while an EOD reprocess is in
+// flight. Automatic (non-manual) installs additionally wait until no POS
+// terminal is online, so the restart is invisible to active registers; a
+// manual tray click skips the online check (the operator chose to restart).
+function applyUpdateIfSafe({ manual }) {
+  if (!downloadedUpdate) {
+    if (manual) {
+      new Notification({
+        title: "Ayala Bridge",
+        body: "No update is ready to install yet.",
+      }).show();
+    }
+    return false;
+  }
+
+  if (isReprocessBusy()) {
+    log.info("[Updater] Install deferred — EOD reprocess in progress.");
+    if (manual) {
+      new Notification({
+        title: "Ayala Bridge — Update Deferred",
+        body: "An EOD reprocess is in progress. The update will apply once it finishes.",
+      }).show();
+    }
+    return false;
+  }
+
+  if (!manual && onlineDeviceCount() > 0) {
+    log.info(
+      "[Updater] Auto-install deferred — terminal(s) still online; will retry.",
+    );
+    return false;
+  }
+
+  log.info(
+    `[Updater] Applying v${downloadedUpdate.version} (${manual ? "manual" : "auto"}) — restarting bridge.`,
+  );
+  if (autoInstallInterval) {
+    clearInterval(autoInstallInterval);
+    autoInstallInterval = null;
+  }
+  app.isQuitting = true;
+  // isSilent=true (no installer UI), isForceRunAfter=true (relaunch after).
+  setImmediate(() => autoUpdater.quitAndInstall(true, true));
+  return true;
+}
 
 // Builds and applies the tray context menu using the provided IP address.
 function buildAndSetTrayMenu(localIP) {
@@ -170,6 +265,14 @@ function buildAndSetTrayMenu(localIP) {
         }).show();
       },
     },
+    ...(downloadedUpdate
+      ? [
+          {
+            label: `Restart & Update to v${downloadedUpdate.version}`,
+            click: () => applyUpdateIfSafe({ manual: true }),
+          },
+        ]
+      : []),
     {
       label: "Check for Updates",
       click: () => {
@@ -223,6 +326,14 @@ if (!gotTheLock) {
       log.warn("[Updater] Update check skipped:", err.message);
     }
 
+    // A 24/7 bridge restarts rarely, so poll periodically — otherwise a
+    // published release is only picked up on the next manual restart.
+    updateCheckInterval = setInterval(() => {
+      autoUpdater.checkForUpdates().catch((err) => {
+        log.warn("[Updater] Periodic update check failed:", err.message);
+      });
+    }, UPDATE_CHECK_MS);
+
     // Create system tray
     currentIP = getLocalIPAddress();
     const iconPath = path.join(__dirname, "assets", "icon.ico");
@@ -254,10 +365,35 @@ if (!gotTheLock) {
       log.error("Failed to initialize system tray:", trayError);
     }
 
-    new Notification({
-      title: "Ayala Bridge Started",
-      body: `Bridge is running on http://${currentIP}:${PORT}`,
-    }).show();
+    // Post-update confirmation: if the running version differs from the one we
+    // last recorded, the auto-updater applied an update since the last launch.
+    // Skipped on first run / fresh install (no version recorded yet) so a new
+    // install never shows a spurious "Updated" toast.
+    const runningVersion = app.getVersion();
+    const previousVersion = userConfig.lastVersion;
+    if (previousVersion && previousVersion !== runningVersion) {
+      new Notification({
+        title: "Ayala Bridge — Updated",
+        body: `Updated to v${runningVersion} (was v${previousVersion}). Running on http://${currentIP}:${PORT}`,
+      }).show();
+    } else {
+      new Notification({
+        title: "Ayala Bridge Started",
+        body: `Bridge is running on http://${currentIP}:${PORT}`,
+      }).show();
+    }
+    if (previousVersion !== runningVersion) {
+      try {
+        userConfig.lastVersion = runningVersion;
+        fs.writeFileSync(
+          configPath,
+          JSON.stringify(userConfig, null, 2),
+          "utf8",
+        );
+      } catch (err) {
+        log.warn("[Updater] Could not persist version to config:", err.message);
+      }
+    }
   });
 }
 
@@ -271,5 +407,13 @@ app.on("before-quit", () => {
   if (ipWatcherInterval) {
     clearInterval(ipWatcherInterval);
     ipWatcherInterval = null;
+  }
+  if (updateCheckInterval) {
+    clearInterval(updateCheckInterval);
+    updateCheckInterval = null;
+  }
+  if (autoInstallInterval) {
+    clearInterval(autoInstallInterval);
+    autoInstallInterval = null;
   }
 });

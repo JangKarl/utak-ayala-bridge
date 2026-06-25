@@ -1,6 +1,6 @@
 {
   "name": "ayala-bridge",
-  "version": "2.50.0",
+  "version": "2.51.0",
   "description": "Bridge for Ayala POS CSV generation",
   "main": "main.js",
   "author": "Ayala Bridge Developer",
