@@ -8,6 +8,7 @@ const reprocessStateService = require("../services/reprocessState.service");
 const eodConsolidationService = require("../services/eodConsolidation.service");
 const { UPLOADS_DIR, STAGING_DIR } = require("../constants/ayala");
 const { validationResult } = require("express-validator");
+const { version: BRIDGE_VERSION } = require("../../package.json");
 
 /** Live consolidated EOD file path for a store/day. */
 function liveEodPath(ccode, mmddyy) {
@@ -150,7 +151,7 @@ class AyalaController {
     res.json({
       status: "Server is running",
       bridge: "ayala-bridge",
-      version: "1.0.0",
+      version: BRIDGE_VERSION,
       devices: terminalRegistryService.listDevices(),
     });
   }
