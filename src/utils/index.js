@@ -117,7 +117,28 @@ const getLocalIPAddress = () => {
   return "127.0.0.1";
 };
 
+/**
+ * Lists every non-internal IPv4 address on this machine, with its interface
+ * name. On a dual-homed POS PC (store Wi-Fi + mall LAN) this returns all
+ * candidates so the operator can pick the POS-facing one in the tray.
+ *
+ * @returns {{ name: string, address: string }[]}
+ */
+const listLocalIPv4Addresses = () => {
+  const interfaces = os.networkInterfaces();
+  const addresses = [];
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === "IPv4" && !iface.internal) {
+        addresses.push({ name, address: iface.address });
+      }
+    }
+  }
+  return addresses;
+};
+
 module.exports = {
   formatValue,
   getLocalIPAddress,
+  listLocalIPv4Addresses,
 };

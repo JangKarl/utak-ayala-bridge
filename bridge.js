@@ -10,7 +10,7 @@ const log = require("electron-log");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const { PORT, UPLOADS_DIR } = require("./src/constants/ayala");
-const { getLocalIPAddress } = require("./src/utils");
+const { getLocalIPAddress, listLocalIPv4Addresses } = require("./src/utils");
 const ayalaRoutes = require("./src/routes/ayala.routes");
 const { initJobs, restartJobs } = require("./src/jobs/ayala.job");
 const { startTimeWatcher } = require("./src/jobs/timeWatcher");
@@ -58,6 +58,7 @@ module.exports = {
   startServer,
   restartJobs,
   getLocalIPAddress,
+  listLocalIPv4Addresses,
   UPLOADS_DIR,
   PORT,
 };

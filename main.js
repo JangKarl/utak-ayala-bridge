@@ -34,6 +34,7 @@ const {
   startServer,
   restartJobs,
   getLocalIPAddress,
+  listLocalIPv4Addresses,
   UPLOADS_DIR,
   PORT,
 } = require("./bridge");
@@ -51,6 +52,41 @@ const UPDATE_CHECK_MS = 6 * 60 * 60 * 1000; // 6 hours
 // Once an update is downloaded, how often we re-check for a safe window to
 // apply it automatically (no reprocess in flight, no terminal online).
 const AUTO_INSTALL_RETRY_MS = 15 * 60 * 1000; // 15 minutes
+
+function saveUserConfig() {
+  try {
+    fs.writeFileSync(configPath, JSON.stringify(userConfig, null, 2), "utf8");
+  } catch (err) {
+    log.error("Failed to save config:", err.message);
+  }
+}
+
+// The IP the bridge advertises to POS devices. On a dual-homed PC (store Wi-Fi
+// + Ayala mall LAN), auto-detect can pick the wrong NIC, so the operator can
+// pin the POS-facing IP via the tray ("Bridge IP"). The pin is only honored
+// while that address is actually present; otherwise we fall back to auto-detect.
+function getEffectiveIP() {
+  const available = listLocalIPv4Addresses().map((a) => a.address);
+  if (userConfig.bridgeIp && available.includes(userConfig.bridgeIp)) {
+    return userConfig.bridgeIp;
+  }
+  return getLocalIPAddress();
+}
+
+function selectBridgeIp(address) {
+  if (address) {
+    userConfig.bridgeIp = address;
+  } else {
+    delete userConfig.bridgeIp; // back to auto-detect
+  }
+  saveUserConfig();
+  currentIP = getEffectiveIP();
+  buildAndSetTrayMenu(currentIP);
+  new Notification({
+    title: "Ayala Bridge — Bridge IP Set",
+    body: `POS devices should connect to http://${currentIP}:${PORT}. Make sure the bridge IP in the POS mall settings matches.`,
+  }).show();
+}
 
 // Configure logging
 log.transports.file.level = "info";
@@ -175,13 +211,33 @@ function buildAndSetTrayMenu(localIP) {
       }))
     : [{ label: "No POS devices seen yet", enabled: false }];
 
+  // POS-facing IP picker. Radio list of every detected IPv4 so the operator
+  // can pin the store-network address (e.g. 192.168.0.171) on a dual-homed PC.
+  const ipItems = [
+    {
+      label: "Auto-detect",
+      type: "radio",
+      checked: !userConfig.bridgeIp,
+      click: () => selectBridgeIp(null),
+    },
+    ...listLocalIPv4Addresses().map((a) => ({
+      label: `${a.address}  (${a.name})`,
+      type: "radio",
+      checked: userConfig.bridgeIp === a.address,
+      click: () => selectBridgeIp(a.address),
+    })),
+  ];
+
   const contextMenu = Menu.buildFromTemplate([
     {
       label: `Ayala Bridge v${app.getVersion()} - Running`,
       enabled: false,
     },
     { type: "separator" },
-    { label: `IP: ${localIP}`, enabled: false },
+    {
+      label: `Bridge IP: ${localIP}`,
+      submenu: ipItems,
+    },
     { label: `Port: ${PORT}`, enabled: false },
     {
       label: `Connected Devices (${onlineCount}/${devices.length})`,
@@ -236,7 +292,7 @@ function buildAndSetTrayMenu(localIP) {
     {
       label: "Refresh IP",
       click: () => {
-        const newIP = getLocalIPAddress();
+        const newIP = getEffectiveIP();
         if (newIP !== currentIP) {
           log.info(`IP changed (manual refresh): ${currentIP} → ${newIP}`);
           currentIP = newIP;
@@ -333,7 +389,7 @@ if (!gotTheLock) {
     }, UPDATE_CHECK_MS);
 
     // Create system tray
-    currentIP = getLocalIPAddress();
+    currentIP = getEffectiveIP();
     const iconPath = path.join(__dirname, "assets", "icon.ico");
 
     try {
@@ -345,7 +401,7 @@ if (!gotTheLock) {
 
         // Background watcher — checks for IP changes every 30 seconds
         ipWatcherInterval = setInterval(() => {
-          const newIP = getLocalIPAddress();
+          const newIP = getEffectiveIP();
           if (newIP !== currentIP) {
             log.info(`IP changed (auto-detected): ${currentIP} → ${newIP}`);
             currentIP = newIP;
