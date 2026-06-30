@@ -3,5 +3,6 @@ dist/
 uploads/
 *.log
 .env*
+electron-builder.env
 .DS_Store
 package-lock.json

@@ -63,11 +63,9 @@ autoUpdater.autoDownload = true;
 // can never fire mid-EOD/reprocess. Leaving this true would let a downloaded
 // update install on ANY app quit — possibly mid-day or mid-reprocess.
 autoUpdater.autoInstallOnAppQuit = false;
-if (process.env.GH_TOKEN) {
-  autoUpdater.requestHeaders = {
-    Authorization: `token ${process.env.GH_TOKEN}`,
-  };
-}
+// The OTA repo (utak-ayala-bridge) is PUBLIC, so electron-updater needs no
+// credentials to read releases. We deliberately do NOT ship a GH_TOKEN with
+// the client — a publish-time token (electron-builder.env) is enough.
 
 autoUpdater.on("update-available", (info) => {
   log.info(`[Updater] Update available: v${info.version}`);

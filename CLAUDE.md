@@ -14,10 +14,13 @@ and coordinates **multiple terminals that share one store** so their
 consolidated reports stay correct.
 
 It ships as a **system-tray Electron app** with an embedded **Express API
-server**, auto-starts on boot, and **auto-updates over the air** from a private
+server**, auto-starts on boot, and **auto-updates over the air** from a public
 GitHub repo.
 
 - **Live repo / OTA target:** `JangKarl/utak-ayala-bridge` (electron-updater).
+  The repo is **public**, so clients download/update with **no token**. A
+  GitHub token is only needed at *publish* time (see below) and must never be
+  shipped with the client.
 - **Default port:** `3800` (override with `PORT` in `.env`).
 - **Client:** `utakmobile24` → `src/mall/ayala/_shared/...` (helpers + `BridgeMonitorService`).
 
@@ -34,9 +37,13 @@ npm run publish  # build + publish a release to GitHub (drives OTA auto-update)
 There is **no test suite** (`npm test` is a stub). Verify changes by running
 `npm run dev` and exercising the HTTP endpoints.
 
-**Releasing an update:** bump `version` in `package.json`, then `npm run publish`
-(requires `GH_TOKEN` with `repo` scope in `.env`). Installed clients download in
-the background and install on next quit (`autoInstallOnAppQuit`).
+**Releasing an update:** bump `version` in `package.json`, then `npm run publish`.
+Publishing needs a GitHub token in **`electron-builder.env`** (`GH_TOKEN=…`) —
+electron-builder loads that file automatically and never packages it. Use a
+fine-grained PAT scoped to **only** this repo (Contents: Read & Write); do not
+use a broad classic `repo` token, and never put the token in `.env` (which is a
+runtime config file). Installed clients download in the background and install
+when the bridge is idle (see the updater guards in `main.js`).
 
 **Build gotcha:** `assets/icon.ico` must contain a 256×256 layer or the NSIS
 build fails.

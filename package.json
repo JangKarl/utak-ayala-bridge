@@ -1,11 +1,21 @@
 {
   "name": "ayala-bridge",
-  "version": "2.51.0",
+  "version": "2.51.1",
   "description": "Bridge for Ayala POS CSV generation",
   "main": "main.js",
   "author": "Ayala Bridge Developer",
   "build": {
     "appId": "com.ayala.bridge",
+    "artifactName": "ayala-bridge-Setup.${ext}",
+    "files": [
+      "**/*",
+      "!.env*",
+      "!electron-builder.env",
+      "!test/**",
+      "!uploads/**",
+      "!dist/**",
+      "!**/*.md"
+    ],
     "publish": {
       "provider": "github",
       "owner": "JangKarl",
@@ -26,7 +36,7 @@
     "start": "electron .",
     "dev": "node -e \"require('./bridge').startServer()\"",
     "build": "electron-builder --win",
-    "publish": "electron-builder --win --publish always",
+    "publish": "electron-builder --win --publish always && node scripts/sync-release-config.js",
     "test": "node --test test/"
   },
   "keywords": [
