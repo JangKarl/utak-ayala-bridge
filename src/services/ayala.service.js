@@ -180,6 +180,29 @@ class AyalaService {
   }
 
   /**
+   * Reads the set of TRANSACTION_NO values already present in an hourly draft
+   * file. Used to make appends idempotent: a transaction re-sent by the POS
+   * (queue drain retry, reprocess re-run) must not be appended twice, or Ayala's
+   * validator rejects the finalized file with "There are same TRANSACTION_NO".
+   *
+   * @param {string} tempPath - Absolute path to the hourly draft temp file.
+   * @returns {Set<string>} TRANSACTION_NO values currently in the draft.
+   */
+  _readExistingTrnNos(tempPath) {
+    const set = new Set();
+    if (!fs.existsSync(tempPath)) return set;
+    const content = fs.readFileSync(tempPath, "utf-8");
+    for (const line of content.split("\n")) {
+      if (line.startsWith("TRANSACTION_NO,")) {
+        const parts = line.split(",");
+        const value = parts[1] ? parts[1].replace(/"/g, "").trim() : "";
+        if (value) set.add(value);
+      }
+    }
+    return set;
+  }
+
+  /**
    * Appends transaction data to a temporary hourly draft file.
    *
    * @param {Object} data - The transaction data object.
@@ -235,6 +258,16 @@ class AyalaService {
     const tempFilename = `temp_${date}_hour_${hour}_ter_${terNo}.csv`;
     const tempPath = path.join(TEMP_DIR, tempFilename);
 
+    // Idempotency: skip a transaction already present in the draft so a re-send
+    // (queue drain retry / reprocess re-run) can't produce a duplicate column.
+    const incomingTrnNo = String(data.TRANSACTION_NO ?? "").trim();
+    if (incomingTrnNo && this._readExistingTrnNos(tempPath).has(incomingTrnNo)) {
+      log.warn(
+        `[AppendTransaction] Skipping duplicate TRANSACTION_NO ${incomingTrnNo} for ter ${terNo} (already in ${tempFilename})`,
+      );
+      return tempFilename;
+    }
+
     let rowsToAppend = "";
 
     if (!fs.existsSync(tempPath)) {
@@ -279,17 +312,39 @@ class AyalaService {
     const tempFilename = `temp_${date}_hour_${hour}_ter_${terNo}.csv`;
     const tempPath = path.join(TEMP_DIR, tempFilename);
 
+    // Idempotency: drop any transaction whose TRANSACTION_NO already exists in
+    // the draft, or is duplicated within this batch (keep the first). A re-sent
+    // batch would otherwise produce duplicate columns that Ayala's validator
+    // rejects ("There are same TRANSACTION_NO").
+    const seenTrnNos = this._readExistingTrnNos(tempPath);
+    const uniqueTransactions = [];
+    transactions.forEach((data) => {
+      const trnNo = String(data.TRANSACTION_NO ?? "").trim();
+      if (trnNo && seenTrnNos.has(trnNo)) {
+        log.warn(
+          `[AppendHourly] Skipping duplicate TRANSACTION_NO ${trnNo} for ter ${terNo} (already present)`,
+        );
+        return;
+      }
+      if (trnNo) seenTrnNos.add(trnNo);
+      uniqueTransactions.push(data);
+    });
+
+    if (uniqueTransactions.length === 0) {
+      return tempFilename;
+    }
+
     let rowsToAppend = "";
 
-    if (!fs.existsSync(tempPath) && transactions.length > 0) {
-      const firstData = transactions[0];
+    if (!fs.existsSync(tempPath)) {
+      const firstData = uniqueTransactions[0];
       FILE_HEADER_FIELDS.forEach((field) => {
         const val = field === "NO_TRN" ? "0" : firstData[field] || "";
         rowsToAppend += `${field},${formatValue(field, val)}\n`;
       });
     }
 
-    transactions.forEach((data) => {
+    uniqueTransactions.forEach((data) => {
       TRANSACTION_FIELDS.forEach((field) => {
         const val = data[field] !== undefined ? data[field] : "";
         rowsToAppend += `${field},${formatValue(field, val)}\n`;
@@ -455,20 +510,62 @@ class AyalaService {
     const tempPath = path.join(TEMP_DIR, tempFilename);
     const content = fs.readFileSync(tempPath, "utf-8");
     const lines = content.split("\n");
-    const transactionCount = lines.filter((line) =>
-      line.startsWith("CDATE,"),
-    ).length;
+
+    // Split into header lines + per-transaction blocks. A block starts at a
+    // CDATE line (the first TRANSACTION_FIELD) and runs until the next CDATE.
+    const headerLines = [];
+    const blocks = [];
+    let currentBlock = null;
+    for (const line of lines) {
+      if (line.startsWith("CDATE,")) {
+        if (currentBlock) blocks.push(currentBlock);
+        currentBlock = [line];
+      } else if (currentBlock) {
+        currentBlock.push(line);
+      } else {
+        headerLines.push(line);
+      }
+    }
+    if (currentBlock) blocks.push(currentBlock);
+
+    // Defense-in-depth dedup: drop any transaction block whose TRANSACTION_NO
+    // already appeared earlier in the draft (keep the first). Even if the
+    // append guards are bypassed, a duplicate must never reach UPLOADS_DIR —
+    // Ayala's validator rejects the whole file if a TRANSACTION_NO repeats.
+    const seen = new Set();
+    const uniqueBlocks = [];
+    for (const block of blocks) {
+      const trnLine = block.find((l) => l.startsWith("TRANSACTION_NO,"));
+      const trnNo = trnLine
+        ? trnLine.split(",")[1].replace(/"/g, "").trim()
+        : "";
+      if (trnNo && seen.has(trnNo)) {
+        log.warn(
+          `[FinalizeHourlyDraft] Dropping duplicate TRANSACTION_NO ${trnNo} from ${tempFilename}`,
+        );
+        continue;
+      }
+      if (trnNo) seen.add(trnNo);
+      uniqueBlocks.push(block);
+    }
+
+    const transactionCount = uniqueBlocks.length;
 
     if (transactionCount === 0) {
       fs.unlinkSync(tempPath);
       return null;
     }
 
-    // Update NO_TRN in the header (line index 3 based on bridge.js logic)
-    lines[3] = `NO_TRN,${transactionCount}`;
+    // Update NO_TRN in the header from the deduped transaction count.
+    const noTrnIdx = headerLines.findIndex((l) => l.startsWith("NO_TRN,"));
+    if (noTrnIdx !== -1) {
+      headerLines[noTrnIdx] = `NO_TRN,${transactionCount}`;
+    }
+
+    const rebuiltLines = [...headerLines, ...uniqueBlocks.flat()];
 
     const extractValue = (key) => {
-      const line = lines.find((l) => l.startsWith(`${key},`));
+      const line = rebuiltLines.find((l) => l.startsWith(`${key},`));
       return line ? line.split(",")[1].replace(/"/g, "") : "";
     };
 
@@ -488,7 +585,7 @@ class AyalaService {
     const yy = dt.getFullYear().toString().slice(-2);
     const dateMMDDYY = `${mm}${dd}${yy}`;
 
-    const lastTrnLine = [...lines]
+    const lastTrnLine = [...rebuiltLines]
       .reverse()
       .find((l) => l.startsWith("TRANSACTION_NO,"));
     const sequence = lastTrnLine
@@ -498,7 +595,7 @@ class AyalaService {
     const officialFilename = `${ccode}${dateMMDDYY}${terminal}_${sequence}.csv`;
     const officialPath = path.join(UPLOADS_DIR, officialFilename);
 
-    fs.writeFileSync(tempPath, lines.join("\n"));
+    fs.writeFileSync(tempPath, rebuiltLines.join("\n"));
     fs.renameSync(tempPath, officialPath);
 
     return officialFilename;
