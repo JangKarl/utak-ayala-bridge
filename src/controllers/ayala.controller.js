@@ -257,8 +257,18 @@ class AyalaController {
       }
 
       if (reproState.inProgress) {
+        // Only gate terminals that are ACTUALLY pending in this reprocess. A
+        // bystander terminal (already done, or never expected) re-sending a
+        // normal EOD with NO_TRN>0 must not be rejected just because another
+        // terminal's reprocess is in flight.
+        const pendingTerNos = new Set(
+          (reproState.pendingTerNos || []).map((t) =>
+            String(t).padStart(3, "0"),
+          ),
+        );
         for (const terminalData of incoming) {
           const ter = String(terminalData.TER_NO || "").padStart(3, "0");
+          if (!pendingTerNos.has(ter)) continue;
           const noTrn = Number(terminalData.NO_TRN || 0);
           const prefix = `${ccode}${mmddyy}${ter}_`;
           const hasRegeneratedHourly = finalizedFiles.some((file) =>
