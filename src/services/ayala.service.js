@@ -10,7 +10,7 @@ const {
   TEMP_DIR,
   STAGING_DIR,
 } = require("../constants/ayala");
-const { formatValue } = require("../utils");
+const { formatValue, atomicWriteFile } = require("../utils");
 
 // Ensure required directories exist on startup
 fs.mkdirSync(TEMP_DIR, { recursive: true });
@@ -175,7 +175,9 @@ class AyalaService {
     });
 
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, csvContent);
+    // Atomic write: the live EOD{ccode}{mmddyy}.csv is what the mall ingests —
+    // a crash mid-write must never leave it half-written.
+    atomicWriteFile(filePath, csvContent);
     return filename;
   }
 
@@ -454,7 +456,7 @@ class AyalaService {
     const yy = dt.getFullYear().toString().slice(-2);
 
     const datePattern = `${mm}_${dd}_${yy}`;
-    const tempFileRegex = new RegExp(`^temp_${datePattern}_hour_\\d+_ter_\\d+\.csv$`);
+    const tempFileRegex = new RegExp(`^temp_${datePattern}_hour_\\d+_ter_\\d+\\.csv$`);
 
     log.info(
       `[FinalizeTempFiles] Scanning for temp files matching date: ${datePattern}`,
@@ -595,8 +597,16 @@ class AyalaService {
     const officialFilename = `${ccode}${dateMMDDYY}${terminal}_${sequence}.csv`;
     const officialPath = path.join(UPLOADS_DIR, officialFilename);
 
-    fs.writeFileSync(tempPath, rebuiltLines.join("\n"));
-    fs.renameSync(tempPath, officialPath);
+    // Publish atomically (tmp+rename, Windows-safe even if a prior official file
+    // exists) and drop the working draft. The old writeFileSync(tempPath)+
+    // renameSync(tempPath, officialPath) threw on Windows when officialPath
+    // already existed (a re-finalize) and wrote the draft non-atomically.
+    atomicWriteFile(officialPath, rebuiltLines.join("\n"));
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch (_) {
+      /* draft cleanup is best-effort */
+    }
 
     return officialFilename;
   }

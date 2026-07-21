@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const log = require("electron-log");
 const { TEMP_DIR } = require("../constants/ayala");
+const { atomicWriteFile } = require("../utils");
 
 const STATE_FILE = path.join(TEMP_DIR, "reprocess_state.json");
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // 24h — reprocess can span until offline terminals return
@@ -59,7 +60,7 @@ class ReprocessStateService {
 
   _persist() {
     try {
-      fs.writeFileSync(STATE_FILE, JSON.stringify(Object.fromEntries(this.state)));
+      atomicWriteFile(STATE_FILE, JSON.stringify(Object.fromEntries(this.state)));
     } catch (err) {
       log.warn(`[Reprocess] Could not persist state: ${err.message}`);
     }
