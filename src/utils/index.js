@@ -1,5 +1,32 @@
 const os = require("os");
+const fs = require("fs");
 const { EOD_FIELDS } = require("../constants/ayala");
+
+/**
+ * Atomic-ish file replace: write a sibling temp file then rename it over the
+ * target. POSIX rename is atomic; Windows rename throws if the target already
+ * exists, so fall back to remove-then-rename. This prevents a crash/power-loss
+ * mid-write from leaving a truncated file — which the state services' _hydrate
+ * would silently swallow (JSON.parse error) and reset to empty, losing an active
+ * EOD lock / reprocess progress / the entire TER_NO ownership registry.
+ *
+ * @param {string} targetPath
+ * @param {string} content
+ */
+const atomicWriteFile = (targetPath, content) => {
+  const tmp = `${targetPath}.tmp`;
+  fs.writeFileSync(tmp, content);
+  try {
+    fs.renameSync(tmp, targetPath);
+  } catch (err) {
+    try {
+      fs.rmSync(targetPath, { force: true });
+    } catch (_) {
+      /* ignore */
+    }
+    fs.renameSync(tmp, targetPath);
+  }
+};
 
 /**
  * Formats a value based on the field key for Ayala CSV compatibility.
@@ -141,4 +168,5 @@ module.exports = {
   formatValue,
   getLocalIPAddress,
   listLocalIPv4Addresses,
+  atomicWriteFile,
 };

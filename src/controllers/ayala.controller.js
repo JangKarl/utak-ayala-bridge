@@ -183,6 +183,11 @@ class AyalaController {
     let finalizedFiles = [];
 
     try {
+      // Record terminal presence and surface any TER_NO conflict at the point
+      // the EOD column is written (generateEodFile upserts by TER_NO). No-op
+      // unless the client sends device identity in the body; never hard-blocks
+      // a compliance-critical EOD — it logs the conflict like heartbeat does.
+      touchDevice(req, "EndOfDay");
       const { data } = req.body;
       const incoming = Array.isArray(data) ? data : [data];
       const first = incoming[0];
@@ -392,6 +397,7 @@ class AyalaController {
     }
 
     try {
+      touchDevice(req, "Transaction");
       const { data } = req.body;
       const trnNo = data.TRANSACTION_NO || "UNKNOWN_TRN";
       const grossSales = data.GROSS_SLS || "0.00";
@@ -425,6 +431,7 @@ class AyalaController {
     }
 
     try {
+      touchDevice(req, "Hourly");
       const { date, hour, data } = req.body;
 
       log.info(
@@ -698,10 +705,22 @@ class AyalaController {
             expectedTerNos.add(ter);
           }
           // Seed the staging rebuild with a copy of the live file so terminals
-          // that don't re-submit are carried forward unchanged.
+          // that don't re-submit are carried forward unchanged — but ONLY on the
+          // FIRST raise for this (ccode, mmddyy). If a staging file already
+          // exists a reprocess is mid-flight and staging holds another
+          // terminal's already-applied correction; re-seeding from the (still
+          // uncorrected) live file would silently discard that correction, which
+          // finalize would then commit as a revert. finalizeReprocess removes the
+          // staging file, so the next raise re-seeds fresh.
           const stagingPath = stagingEodPath(ccode, mmddyy);
           fs.mkdirSync(path.dirname(stagingPath), { recursive: true });
-          fs.copyFileSync(livePath, stagingPath);
+          if (!fs.existsSync(stagingPath)) {
+            fs.copyFileSync(livePath, stagingPath);
+          } else {
+            log.info(
+              `[Reprocess] Staging already in progress for ${ccode} ${mmddyy}; preserving applied corrections (not re-seeding from live).`,
+            );
+          }
         } catch (snapErr) {
           log.warn(
             `[Reprocess] Could not snapshot live EOD for ${ccode} ${mmddyy}: ${snapErr.message}`,

@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const log = require("electron-log");
 const { TEMP_DIR } = require("../constants/ayala");
+const { atomicWriteFile } = require("../utils");
 
 const REGISTRY_FILE = path.join(TEMP_DIR, "terminal_registry.json");
 
@@ -48,7 +49,7 @@ class TerminalRegistryService {
 
   _persist() {
     try {
-      fs.writeFileSync(REGISTRY_FILE, JSON.stringify(this.registry));
+      atomicWriteFile(REGISTRY_FILE, JSON.stringify(this.registry));
     } catch (err) {
       log.warn(`[TerminalRegistry] Could not persist registry: ${err.message}`);
     }

@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const log = require("electron-log");
 const { UPLOADS_DIR, TEMP_DIR, EOD_FIELDS } = require("../constants/ayala");
+const { atomicWriteFile } = require("../utils");
 
 const LOCK_FILE = path.join(TEMP_DIR, "eod_locks.json");
 const DEFAULT_TTL_MS = 60 * 60 * 1000; // 60 minutes
@@ -71,7 +72,7 @@ class EodLockService {
   _persist() {
     try {
       const obj = Object.fromEntries(this.locks);
-      fs.writeFileSync(LOCK_FILE, JSON.stringify(obj));
+      atomicWriteFile(LOCK_FILE, JSON.stringify(obj));
     } catch (err) {
       log.warn(`[EodLock] Could not persist lock file: ${err.message}`);
     }
