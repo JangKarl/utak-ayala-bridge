@@ -257,14 +257,17 @@ function buildAndSetTrayMenu(localIP) {
     {
       label: "Select Directory",
       click: async () => {
-        const result = await dialog.showOpenDialog({
-          title: "Select Uploads Directory",
-          defaultPath: UPLOADS_DIR,
-          properties: ["openDirectory"],
-        });
-        if (result.canceled || result.filePaths.length === 0) return;
-        const selectedDir = result.filePaths[0];
+        // Wrap the whole handler: an Electron menu click doesn't await/catch the
+        // returned promise, so a rejection from showOpenDialog (or the write)
+        // would become an unhandled rejection.
         try {
+          const result = await dialog.showOpenDialog({
+            title: "Select Uploads Directory",
+            defaultPath: UPLOADS_DIR,
+            properties: ["openDirectory"],
+          });
+          if (result.canceled || result.filePaths.length === 0) return;
+          const selectedDir = result.filePaths[0];
           fs.writeFileSync(
             configPath,
             JSON.stringify({ ...userConfig, uploadsDir: selectedDir }, null, 2),
@@ -279,7 +282,7 @@ function buildAndSetTrayMenu(localIP) {
             app.exit(0);
           }, 1500);
         } catch (err) {
-          log.error("Failed to save directory config:", err);
+          log.error("Failed to select/save directory config:", err);
         }
       },
     },
@@ -373,9 +376,14 @@ if (!gotTheLock) {
       app.quit();
     }
 
-    // Check for updates silently on startup
+    // Check for updates silently on startup. checkForUpdates() returns a
+    // promise, so a bare sync try/catch would miss an async rejection (e.g. no
+    // internet on boot) and leave an unhandled promise rejection — attach
+    // .catch like the periodic/manual checks do (outer try guards a sync throw).
     try {
-      autoUpdater.checkForUpdates();
+      autoUpdater.checkForUpdates().catch((err) => {
+        log.warn("[Updater] Startup update check failed:", err.message);
+      });
     } catch (err) {
       log.warn("[Updater] Update check skipped:", err.message);
     }

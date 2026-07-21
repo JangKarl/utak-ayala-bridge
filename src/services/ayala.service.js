@@ -456,7 +456,7 @@ class AyalaService {
     const yy = dt.getFullYear().toString().slice(-2);
 
     const datePattern = `${mm}_${dd}_${yy}`;
-    const tempFileRegex = new RegExp(`^temp_${datePattern}_hour_\\d+_ter_\\d+\.csv$`);
+    const tempFileRegex = new RegExp(`^temp_${datePattern}_hour_\\d+_ter_\\d+\\.csv$`);
 
     log.info(
       `[FinalizeTempFiles] Scanning for temp files matching date: ${datePattern}`,
