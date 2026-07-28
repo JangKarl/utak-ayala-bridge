@@ -40,8 +40,24 @@ npm run dev      # Express server only (headless)
 npm start        # Full Electron app with system tray
 npm run build    # Build the Windows NSIS installer -> dist/
 npm run publish  # Build + publish a GitHub release (drives OTA updates)
+npm test         # Run the test suite (node --test)
 ```
-There is no automated test suite yet — verify via `npm run dev` and the HTTP API.
+
+### Tests
+`npm test` runs `node --test test/` — no test framework, just the Node runner:
+
+| File | Covers |
+|---|---|
+| `atomicWrite.test.js` | Crash-safe file replace, incl. the Windows rename fallback |
+| `terminalRegistry.test.js` | TER_NO ownership, takeover, reinstall recovery |
+| `dateFormat.test.js` | Date→filename stamps, incl. a child-process check under a hostile `TZ` |
+| `tempDraftScan.test.js` | Which hourly drafts an EOD is allowed to finalize |
+
+Some cases in `dateFormat.test.js` **must** spawn a child process: Node resolves the
+local timezone once at startup, so mutating `process.env.TZ` in-process proves nothing.
+
+Tests don't cover the tray, the updater, or the Express layer — verify those with
+`npm run dev` and the HTTP API.
 
 ## Configuration
 Settings live in the `.env` file in the application directory:
@@ -51,6 +67,8 @@ Settings live in the `.env` file in the application directory:
 - `TIMEZONE` — store-local timezone used for every date that ends up in a
   generated filename or an EOD lock key (**default `Asia/Manila`**). Only change
   this for a non-PH deployment; it must NOT be set to the POS PC's own timezone.
+- `UPLOADS_DIR` — overrides the mall pickup folder. Normally set from the tray
+  ("Select Directory") rather than by hand; see [Directories](#directories).
 - `LOG_LEVEL`, `NODE_ENV` — logging / environment.
 
 ## API (summary)

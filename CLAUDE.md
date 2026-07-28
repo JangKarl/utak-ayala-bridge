@@ -78,7 +78,7 @@ src/
 ├── jobs/
 │   ├── ayala.job.js                # Hourly draft finalize cron + reprocess-finalize sweep cron
 │   └── timeWatcher.js              # Detects manual system-clock changes, restarts cron
-└── utils/index.js                  # getLocalIPAddress, formatValue
+└── utils/index.js                  # formatValue, atomicWriteFile, local IPs, store-tz date helpers
 ```
 
 **Rule:** controllers do HTTP/validation/logging; services hold logic and have
@@ -132,6 +132,28 @@ formatting in `formatValue()` ([src/utils/index.js](src/utils/index.js)).
 `mmddyy` / the date in filenames is the **business date** sent by the POS, which
 can differ from the server's calendar date (after-midnight sales still belong to
 the previous shift). The hourly cron matches on **hour only** for this reason.
+
+**Rule:** never derive a date or hour from machine-local time. Anything that ends
+up in a filename, an EOD lock key, or a temp-file bucket goes through the store-tz
+helpers in [src/utils/index.js](src/utils/index.js) — `mmddyy()`,
+`mmddyyUnderscored()`, `parseWireDate()`, `nowTz()` — which resolve against
+`TIMEZONE` (default `Asia/Manila`), not the PC's clock.
+
+`new Date("YYYY-MM-DD")` is the specific trap: it parses as **UTC** midnight, but
+`getMonth()/getDate()/getFullYear()` read back **machine-local**, so a POS PC on a
+negative UTC offset names the file a day early and the mall rejects it with
+*"TRN_DATE in filename not equal to TRN_DATE inside the file"* (v2.52.4). Parsing
+is strict on purpose: the CSV stores the raw `TRN_DATE` string while the filename
+stores the parsed one, so a date that merely *looks* parseable must be rejected
+rather than guessed at.
+
+An EOD may finalize an hourly draft whose **filename** date is a day off (drafts
+left by pre-v2.52.4 builds) only when the `TRN_DATE` **inside** that draft matches
+the day being closed. Filename-only matching would sweep up drafts belonging to a
+genuinely different business day — EOD is routinely posted for a prior day while
+today's drafts are still accumulating — closing the current hour early and
+breaking `TRANSACTION_NO` dedup, which Ayala rejects with *"There are same
+TRANSACTION_NO"*.
 
 ## HTTP API
 
