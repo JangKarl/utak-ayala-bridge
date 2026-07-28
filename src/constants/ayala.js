@@ -2,6 +2,16 @@ const path = require("path");
 const os = require("os");
 
 /**
+ * Store-local timezone used for EVERY date/time derivation that ends up in a
+ * filename or a lock key. The bridge runs on a merchant's POS PC whose Windows
+ * timezone is not guaranteed to be Manila — deriving dates from machine-local
+ * time let the filename date disagree with the TRN_DATE inside the file, which
+ * the mall rejects outright. Overridable for a non-PH deployment.
+ * @type {string}
+ */
+const TIMEZONE = process.env.TIMEZONE || "Asia/Manila";
+
+/**
  * Fields used in the header of the transaction CSV files.
  * @type {string[]}
  */
@@ -236,6 +246,7 @@ module.exports = {
   ITEM_FIELDS,
   EOD_FIELDS,
   PORT,
+  TIMEZONE,
   UPLOADS_DIR,
   TEMP_DIR,
   STAGING_DIR,

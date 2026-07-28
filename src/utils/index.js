@@ -1,6 +1,67 @@
 const os = require("os");
 const fs = require("fs");
-const { EOD_FIELDS } = require("../constants/ayala");
+const moment = require("moment-timezone");
+const { EOD_FIELDS, TIMEZONE } = require("../constants/ayala");
+
+/**
+ * The wire format of every date the POS sends us (TRN_DATE, CDATE).
+ * @type {string}
+ */
+const WIRE_DATE_FORMAT = "YYYY-MM-DD";
+
+/**
+ * Parses a POS-supplied date string in the store timezone.
+ *
+ * Do NOT use `new Date(str)` for this: the spec parses a bare "YYYY-MM-DD" as
+ * UTC midnight, while getMonth()/getDate()/getFullYear() read it back in
+ * MACHINE-local time. On a POS PC whose Windows timezone has a negative UTC
+ * offset that rolls the date back a day, so the date baked into a filename
+ * disagrees with the TRN_DATE inside the file and the mall rejects it.
+ * Parsing is STRICT. The CSV records the raw TRN_DATE string while the filename
+ * records the parsed one, so anything moment would merely guess at (e.g.
+ * "07/27/2026") must be rejected outright — accepting it would put a date in
+ * the filename that does not correspond to the string inside the file, which is
+ * the exact defect this helper exists to prevent.
+ *
+ * @param {string} dateStr - Date string in YYYY-MM-DD form.
+ * @returns {import("moment-timezone").Moment} A moment in TIMEZONE; check
+ *   `.isValid()` before use.
+ */
+const parseWireDate = (dateStr) =>
+  moment.tz(dateStr, WIRE_DATE_FORMAT, true, TIMEZONE);
+
+/**
+ * Formats a POS-supplied date as the MMDDYY stamp used in official Ayala
+ * filenames and in the CCCODE+MMDDYY EOD lock / reprocess-state keys.
+ *
+ * @param {string} dateStr - Date string in YYYY-MM-DD form.
+ * @returns {string|null} MMDDYY, or null when the input is not a valid date.
+ */
+const mmddyy = (dateStr) => {
+  const m = parseWireDate(dateStr);
+  return m.isValid() ? m.format("MMDDYY") : null;
+};
+
+/**
+ * Formats a POS-supplied date as the MM_DD_YY stamp used in temp hourly draft
+ * filenames (temp_MM_DD_YY_hour_H_ter_NNN.csv).
+ *
+ * @param {string} dateStr - Date string in YYYY-MM-DD form.
+ * @returns {string|null} MM_DD_YY, or null when the input is not a valid date.
+ */
+const mmddyyUnderscored = (dateStr) => {
+  const m = parseWireDate(dateStr);
+  return m.isValid() ? m.format("MM_DD_YY") : null;
+};
+
+/**
+ * Current time in the store timezone. Used wherever "now" has to line up with
+ * the POS's own clock — the hourly cron's target hour must match the Manila
+ * TRN_TIME the temp files are bucketed by, not the PC's wall clock.
+ *
+ * @returns {import("moment-timezone").Moment}
+ */
+const nowTz = () => moment.tz(TIMEZONE);
 
 /**
  * Atomic-ish file replace: write a sibling temp file then rename it over the
@@ -169,4 +230,8 @@ module.exports = {
   getLocalIPAddress,
   listLocalIPv4Addresses,
   atomicWriteFile,
+  parseWireDate,
+  mmddyy,
+  mmddyyUnderscored,
+  nowTz,
 };
