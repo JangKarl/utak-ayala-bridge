@@ -32,10 +32,18 @@ npm run dev      # Express server only, headless (require('./bridge').startServe
 npm start        # Full Electron app + system tray
 npm run build    # Windows NSIS installer -> dist/
 npm run publish  # build + publish a release to GitHub (drives OTA auto-update)
+npm test         # node --test test/
 ```
 
-There is **no test suite** (`npm test` is a stub). Verify changes by running
-`npm run dev` and exercising the HTTP endpoints.
+`npm test` runs the Node test runner over `test/` — no framework. It covers the
+pure, file-level logic: atomic writes, the terminal registry, store-tz date
+stamps, and which hourly drafts an EOD may finalize. The tray, the updater and
+the Express layer are **not** covered — verify those by running `npm run dev` and
+exercising the HTTP endpoints.
+
+Some date cases **must** run in a spawned child process: Node resolves the local
+timezone once at startup, so setting `process.env.TZ` inside a test proves
+nothing. See `test/dateFormat.test.js` and `test/fixtures/printDateStamps.js`.
 
 **Releasing an update:** bump `version` in `package.json`, then `npm run publish`.
 Publishing needs a GitHub token in **`electron-builder.env`** (`GH_TOKEN=…`) —

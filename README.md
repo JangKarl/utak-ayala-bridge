@@ -90,8 +90,3 @@ Base URL `http://<bridge-ip>:3800`. Full reference in [CLAUDE.md](CLAUDE.md).
 If you have CSV files from a previous installation, copy them from the old
 location (`%USERPROFILE%\.ayala-bridge\uploads`) to
 `C:\AYALA\tenant_api\storage\app\OUTGOING`.
-
-## Icon requirements
-For a production installer, `assets/icon.ico` must be a valid `.ico` containing a
-layer of at least **256×256 px**, or the build fails. Online converters like
-`icoconvert.com` can ensure the 256px layer is present.
