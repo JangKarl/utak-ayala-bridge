@@ -48,6 +48,9 @@ Settings live in the `.env` file in the application directory:
 - `PORT` — API port (**default `3800`**).
 - `GH_TOKEN` — GitHub PAT (`repo` scope) used by the auto-updater for the
   private release repo. Required for OTA and for `npm run publish`.
+- `TIMEZONE` — store-local timezone used for every date that ends up in a
+  generated filename or an EOD lock key (**default `Asia/Manila`**). Only change
+  this for a non-PH deployment; it must NOT be set to the POS PC's own timezone.
 - `LOG_LEVEL`, `NODE_ENV` — logging / environment.
 
 ## API (summary)
