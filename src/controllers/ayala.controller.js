@@ -7,6 +7,10 @@ const terminalRegistryService = require("../services/terminalRegistry.service");
 const reprocessStateService = require("../services/reprocessState.service");
 const eodConsolidationService = require("../services/eodConsolidation.service");
 const { UPLOADS_DIR, STAGING_DIR } = require("../constants/ayala");
+// Aliased: several handlers already bind `mmddyy` as a local/param, and a
+// bare import of the same name would be shadowed in some scopes and shadow the
+// value in others.
+const { mmddyy: toMmddyy } = require("../utils");
 const { validationResult } = require("express-validator");
 const { version: BRIDGE_VERSION } = require("../../package.json");
 
@@ -201,8 +205,8 @@ class AyalaController {
           .json({ error: "CCCODE and TRN_DATE are required" });
       }
 
-      const dt = new Date(trnDate);
-      if (isNaN(dt.getTime())) {
+      const mmddyy = toMmddyy(trnDate);
+      if (!mmddyy) {
         log.error(`[EndOfDay] Invalid TRN_DATE: ${trnDate}`);
         return res.status(400).json({ error: "Invalid TRN_DATE format" });
       }
@@ -211,10 +215,6 @@ class AyalaController {
         `[EndOfDay] Request received for CCCODE: ${ccode} Date: ${trnDate}`,
       );
 
-      const mm = (dt.getMonth() + 1).toString().padStart(2, "0");
-      const dd = dt.getDate().toString().padStart(2, "0");
-      const yy = dt.getFullYear().toString().slice(-2);
-      const mmddyy = `${mm}${dd}${yy}`;
       const reproState = reprocessStateService.getState({ ccode, mmddyy });
       const incomingTerNos = incoming.map((t) =>
         String(t.TER_NO || "").padStart(3, "0"),

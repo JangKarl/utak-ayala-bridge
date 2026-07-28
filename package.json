@@ -1,6 +1,6 @@
 {
   "name": "ayala-bridge",
-  "version": "2.52.3",
+  "version": "2.52.4",
   "description": "Bridge for Ayala POS CSV generation",
   "main": "main.js",
   "author": "Ayala Bridge Developer",
@@ -53,6 +53,7 @@
     "electron-updater": "^6.8.3",
     "express": "^5.2.1",
     "express-validator": "^7.2.1",
+    "moment-timezone": "^0.6.3",
     "multer": "^2.0.2",
     "node-cron": "^4.2.1"
   },

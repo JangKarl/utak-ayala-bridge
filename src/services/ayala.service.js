@@ -10,7 +10,14 @@ const {
   TEMP_DIR,
   STAGING_DIR,
 } = require("../constants/ayala");
-const { formatValue, atomicWriteFile } = require("../utils");
+const {
+  formatValue,
+  atomicWriteFile,
+  parseWireDate,
+  mmddyy,
+  mmddyyUnderscored,
+  nowTz,
+} = require("../utils");
 
 // Ensure required directories exist on startup
 fs.mkdirSync(TEMP_DIR, { recursive: true });
@@ -91,11 +98,10 @@ class AyalaService {
     const ccode = first.CCCODE;
     const trnDate = first.TRN_DATE;
 
-    const dt = new Date(trnDate);
-    const mm = (dt.getMonth() + 1).toString().padStart(2, "0");
-    const dd = dt.getDate().toString().padStart(2, "0");
-    const yy = dt.getFullYear().toString().slice(-2);
-    const dateMMDDYY = `${mm}${dd}${yy}`;
+    const dateMMDDYY = mmddyy(trnDate);
+    if (!dateMMDDYY) {
+      throw new Error(`Invalid TRN_DATE "${trnDate}" in EOD payload`);
+    }
 
     const filename = `EOD${ccode}${dateMMDDYY}.csv`;
     const filePath = options.targetPath || path.join(UPLOADS_DIR, filename);
@@ -205,17 +211,42 @@ class AyalaService {
   }
 
   /**
+   * Reads the business date an hourly draft declares in its own header. Used to
+   * tell a pre-fix draft whose FILENAME date is stale (but whose TRN_DATE is
+   * correct) apart from a draft that genuinely belongs to another business day.
+   *
+   * @param {string} tempPath - Absolute path to the hourly draft temp file.
+   * @returns {string|null} The draft's TRN_DATE, or null if unreadable.
+   */
+  _readDraftTrnDate(tempPath) {
+    try {
+      const content = fs.readFileSync(tempPath, "utf-8");
+      const line = content
+        .split("\n")
+        .find((l) => l.startsWith("TRN_DATE,"));
+      if (!line) return null;
+      const value = line.split(",")[1];
+      return value ? value.replace(/"/g, "").trim() : null;
+    } catch (err) {
+      log.warn(
+        `[FinalizeTempFiles] Could not read TRN_DATE from ${tempPath}: ${err.message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Appends transaction data to a temporary hourly draft file.
    *
    * @param {Object} data - The transaction data object.
    * @returns {string} The temporary filename.
    */
   appendTransaction(data) {
-    const now = new Date();
+    const now = nowTz();
 
     // Derive hour from TRN_TIME ("HH:MM") so the temp file bucket matches
     // the transaction time, not the server's wall-clock hour.
-    let hour = now.getHours();
+    let hour = now.hours();
     if (data.TRN_TIME) {
       const parsed = parseInt(data.TRN_TIME.split(":")[0], 10);
       if (!isNaN(parsed)) {
@@ -233,10 +264,9 @@ class AyalaService {
 
     let dateSource = null;
     if (data.TRN_DATE) {
-      const parsed = new Date(data.TRN_DATE);
-      if (!isNaN(parsed.getTime())) {
+      const parsed = parseWireDate(data.TRN_DATE);
+      if (parsed.isValid()) {
         dateSource = parsed;
-        console.log("dateSource", dateSource);
       } else {
         log.warn(
           `[AppendTransaction] Invalid TRN_DATE "${data.TRN_DATE}", falling back to server date`,
@@ -252,10 +282,7 @@ class AyalaService {
       dateSource = now;
     }
 
-    const date = `${(dateSource.getMonth() + 1).toString().padStart(2, "0")}_${dateSource
-      .getDate()
-      .toString()
-      .padStart(2, "0")}_${dateSource.getFullYear().toString().slice(-2)}`;
+    const date = dateSource.format("MM_DD_YY");
     const terNo = String(data.TER_NO || "1").trim().padStart(3, "0");
     const tempFilename = `temp_${date}_hour_${hour}_ter_${terNo}.csv`;
     const tempPath = path.join(TEMP_DIR, tempFilename);
@@ -450,20 +477,65 @@ class AyalaService {
    * @throws {Error} If finalization of any temp file fails.
    */
   finalizeAllTempFilesForDate(trnDate) {
-    const dt = new Date(trnDate);
-    const mm = (dt.getMonth() + 1).toString().padStart(2, "0");
-    const dd = dt.getDate().toString().padStart(2, "0");
-    const yy = dt.getFullYear().toString().slice(-2);
+    const datePattern = mmddyyUnderscored(trnDate);
+    if (!datePattern) {
+      throw new Error(`Invalid TRN_DATE "${trnDate}" for temp-file scan`);
+    }
+    const dt = parseWireDate(trnDate);
 
-    const datePattern = `${mm}_${dd}_${yy}`;
-    const tempFileRegex = new RegExp(`^temp_${datePattern}_hour_\\d+_ter_\\d+\\.csv$`);
+    const exactRegex = new RegExp(
+      `^temp_${datePattern}_hour_\\d+_ter_\\d+\\.csv$`,
+    );
+
+    // Transition scan. Before this fix the temp filename was derived from the
+    // machine's local timezone, so on a POS PC with a negative UTC offset the
+    // drafts on disk are stamped one day BEHIND their real business date. A
+    // straight match on the corrected pattern would leave those drafts orphaned
+    // — their transactions would never reach an official per-transaction file,
+    // which is exactly the per-txn vs EOD cross-validation failure.
+    //
+    // An adjacent-day FILENAME is not sufficient grounds to finalize, though:
+    // drafts for a genuinely different business day sit in the same directory
+    // (EOD is routinely posted for a prior day — the POS back-fills missing
+    // days — while today's drafts are still accumulating). Sweeping one of
+    // those up would close the current hour early, so a re-sent transaction
+    // would land in a fresh draft that can no longer see the already-emitted
+    // TRANSACTION_NOs and Ayala rejects the pair with "There are same
+    // TRANSACTION_NO". So an adjacent-day name only qualifies when the
+    // TRN_DATE *inside* the file says it belongs to this business day, which
+    // is exactly what distinguishes a mis-stamped legacy draft from a real
+    // one. Self-expires once the pre-fix drafts are drained.
+    const adjacentPatterns = [
+      dt.clone().subtract(1, "day").format("MM_DD_YY"),
+      dt.clone().add(1, "day").format("MM_DD_YY"),
+    ];
+    const adjacentRegex = new RegExp(
+      `^temp_(?:${adjacentPatterns.join("|")})_hour_\\d+_ter_\\d+\\.csv$`,
+    );
 
     log.info(
-      `[FinalizeTempFiles] Scanning for temp files matching date: ${datePattern}`,
+      `[FinalizeTempFiles] Scanning for temp files matching date: ${datePattern} (+/- 1 day for pre-fix drafts, gated on internal TRN_DATE)`,
     );
 
     const files = fs.readdirSync(TEMP_DIR);
-    const tempFiles = files.filter((file) => tempFileRegex.test(file));
+    const tempFiles = files.filter((file) => {
+      if (exactRegex.test(file)) return true;
+      if (!adjacentRegex.test(file)) return false;
+
+      const internalDate = this._readDraftTrnDate(path.join(TEMP_DIR, file));
+      if (internalDate === trnDate) {
+        log.warn(
+          `[FinalizeTempFiles] Recovering pre-fix draft ${file}: filename date is stale but TRN_DATE inside is ${trnDate}.`,
+        );
+        return true;
+      }
+      log.info(
+        `[FinalizeTempFiles] Leaving ${file} alone: TRN_DATE inside is ${
+          internalDate || "unreadable"
+        }, not ${trnDate}.`,
+      );
+      return false;
+    });
 
     if (tempFiles.length === 0) {
       log.info(
@@ -576,16 +648,12 @@ class AyalaService {
     const terNo = extractValue("TER_NO") || "001";
     const terminal = terNo.padStart(3, "0");
 
-    const dt = new Date(trnDate);
-    if (isNaN(dt.getTime())) {
+    const dateMMDDYY = mmddyy(trnDate);
+    if (!dateMMDDYY) {
       throw new Error(
         `Invalid date pattern "${trnDate}" found in ${tempFilename}`,
       );
     }
-    const mm = (dt.getMonth() + 1).toString().padStart(2, "0");
-    const dd = dt.getDate().toString().padStart(2, "0");
-    const yy = dt.getFullYear().toString().slice(-2);
-    const dateMMDDYY = `${mm}${dd}${yy}`;
 
     const lastTrnLine = [...rebuiltLines]
       .reverse()

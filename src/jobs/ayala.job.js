@@ -5,16 +5,21 @@ const path = require("path");
 const ayalaService = require("../services/ayala.service");
 const ayalaController = require("../controllers/ayala.controller");
 const { TEMP_DIR } = require("../constants/ayala");
+const { nowTz } = require("../utils");
 
 let hourlyCronTask = null;
 let reprocessSweepTask = null;
 
 const startCronJob = () => {
   hourlyCronTask = cron.schedule("0 * * * *", () => {
-    const now = new Date();
-    // Target the previous hour for finalization
-    const targetTime = new Date(now.getTime() - 60 * 60 * 1000);
-    const hour = targetTime.getHours();
+    // Target the previous hour for finalization. The hour MUST come from the
+    // store timezone, not the machine's: temp files are bucketed by the POS's
+    // Manila TRN_TIME, so on a POS PC whose Windows timezone is not Manila the
+    // machine-local hour never matches any bucket and this job silently
+    // finalizes nothing (masked until now by the EOD endpoint's
+    // finalizeAllTempFilesForDate safety net).
+    const targetTime = nowTz().subtract(1, "hour");
+    const hour = targetTime.hours();
 
     // Match temp files for this hour regardless of business date.
     // The mobile sends TRN_DATE as the business date, so an after-midnight
