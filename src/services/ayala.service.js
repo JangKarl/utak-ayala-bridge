@@ -49,6 +49,27 @@ function _parseCsvLine(line) {
 }
 
 /**
+ * Thrown when an incoming record's TRANSACTION_NO already exists in the
+ * target draft under a DIFFERENT SLS_FLAG (e.g. a sale and a refund sharing
+ * the same identifier). This is distinct from a legitimate duplicate re-send
+ * (same TRANSACTION_NO, same SLS_FLAG — a queue-drain retry or reprocess
+ * re-run), which is still silently absorbed. A collision means the POS-side
+ * TRANSACTION_NO allocation is broken and MUST be surfaced loudly rather
+ * than resolved by silently keeping one side — Ayala's own validator
+ * rejects a file with a repeated TRANSACTION_NO outright, so silently
+ * dropping the second occurrence here would just convert a visible mall
+ * rejection into an invisible dropped row (see task e5fad5f5 /
+ * mamonaku_vermosa 2026-08-04).
+ */
+class TrnNoCollisionError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "TrnNoCollisionError";
+    this.code = "TRN_NO_COLLISION";
+  }
+}
+
+/**
  * Moves a file, falling back to copy+unlink when source and destination are on
  * different volumes. fs.renameSync throws EXDEV across drives, which can happen
  * now that the staging area (TEMP_DIR) may sit on a different drive than an
@@ -188,26 +209,42 @@ class AyalaService {
   }
 
   /**
-   * Reads the set of TRANSACTION_NO values already present in an hourly draft
-   * file. Used to make appends idempotent: a transaction re-sent by the POS
-   * (queue drain retry, reprocess re-run) must not be appended twice, or Ayala's
-   * validator rejects the finalized file with "There are same TRANSACTION_NO".
+   * Reads the TRANSACTION_NO -> SLS_FLAG map already present in an hourly
+   * draft file. Used to make appends idempotent — a transaction re-sent by
+   * the POS (queue drain retry, reprocess re-run) must not be appended
+   * twice, or Ayala's validator rejects the finalized file with "There are
+   * same TRANSACTION_NO" — AND to distinguish that legitimate re-send (same
+   * TRANSACTION_NO, same SLS_FLAG) from a genuine collision (same
+   * TRANSACTION_NO, a DIFFERENT SLS_FLAG — e.g. a sale and a refund sharing
+   * one identifier), which callers should treat as an error rather than
+   * silently absorb. See TrnNoCollisionError.
    *
    * @param {string} tempPath - Absolute path to the hourly draft temp file.
-   * @returns {Set<string>} TRANSACTION_NO values currently in the draft.
+   * @returns {Map<string, string>} TRANSACTION_NO -> SLS_FLAG currently in the draft.
    */
-  _readExistingTrnNos(tempPath) {
-    const set = new Set();
-    if (!fs.existsSync(tempPath)) return set;
+  _readExistingTrnRecords(tempPath) {
+    const map = new Map();
+    if (!fs.existsSync(tempPath)) return map;
     const content = fs.readFileSync(tempPath, "utf-8");
-    for (const line of content.split("\n")) {
-      if (line.startsWith("TRANSACTION_NO,")) {
-        const parts = line.split(",");
-        const value = parts[1] ? parts[1].replace(/"/g, "").trim() : "";
-        if (value) set.add(value);
+    const lines = content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith("TRANSACTION_NO,")) {
+        const trnNo = lines[i].split(",")[1]?.replace(/"/g, "").trim() || "";
+        if (!trnNo) continue;
+        // SLS_FLAG is one of the fixed TRANSACTION_FIELDS rows within the
+        // same per-transaction block; scan forward within this block (up to
+        // the next TRANSACTION_NO line) rather than assuming a fixed offset.
+        let slsFlag = "";
+        for (let j = i + 1; j < lines.length && !lines[j].startsWith("TRANSACTION_NO,"); j++) {
+          if (lines[j].startsWith("SLS_FLAG,")) {
+            slsFlag = lines[j].split(",")[1]?.replace(/"/g, "").trim() || "";
+            break;
+          }
+        }
+        map.set(trnNo, slsFlag);
       }
     }
-    return set;
+    return map;
   }
 
   /**
@@ -289,12 +326,24 @@ class AyalaService {
 
     // Idempotency: skip a transaction already present in the draft so a re-send
     // (queue drain retry / reprocess re-run) can't produce a duplicate column.
+    // A DIFFERENT SLS_FLAG under the same TRANSACTION_NO is not a re-send —
+    // it's a collision (the POS allocated the same identifier to two distinct
+    // events) — and must be surfaced as an error, not silently dropped.
     const incomingTrnNo = String(data.TRANSACTION_NO ?? "").trim();
-    if (incomingTrnNo && this._readExistingTrnNos(tempPath).has(incomingTrnNo)) {
-      log.warn(
-        `[AppendTransaction] Skipping duplicate TRANSACTION_NO ${incomingTrnNo} for ter ${terNo} (already in ${tempFilename})`,
-      );
-      return tempFilename;
+    if (incomingTrnNo) {
+      const existingFlag = this._readExistingTrnRecords(tempPath).get(incomingTrnNo);
+      if (existingFlag !== undefined) {
+        const incomingFlag = String(data.SLS_FLAG ?? "").trim();
+        if (existingFlag === incomingFlag) {
+          log.warn(
+            `[AppendTransaction] Skipping duplicate TRANSACTION_NO ${incomingTrnNo} for ter ${terNo} (already in ${tempFilename})`,
+          );
+          return tempFilename;
+        }
+        throw new TrnNoCollisionError(
+          `TRANSACTION_NO ${incomingTrnNo} already exists in ${tempFilename} as SLS_FLAG=${existingFlag}, incoming SLS_FLAG=${incomingFlag}`,
+        );
+      }
     }
 
     let rowsToAppend = "";
@@ -344,18 +393,28 @@ class AyalaService {
     // Idempotency: drop any transaction whose TRANSACTION_NO already exists in
     // the draft, or is duplicated within this batch (keep the first). A re-sent
     // batch would otherwise produce duplicate columns that Ayala's validator
-    // rejects ("There are same TRANSACTION_NO").
-    const seenTrnNos = this._readExistingTrnNos(tempPath);
+    // rejects ("There are same TRANSACTION_NO"). A DIFFERENT SLS_FLAG under the
+    // same TRANSACTION_NO (either against the existing draft, or between two
+    // records in THIS batch) is a collision, not a re-send — abort the whole
+    // batch rather than silently keep one side. See TrnNoCollisionError.
+    const seenFlags = this._readExistingTrnRecords(tempPath);
     const uniqueTransactions = [];
     transactions.forEach((data) => {
       const trnNo = String(data.TRANSACTION_NO ?? "").trim();
-      if (trnNo && seenTrnNos.has(trnNo)) {
-        log.warn(
-          `[AppendHourly] Skipping duplicate TRANSACTION_NO ${trnNo} for ter ${terNo} (already present)`,
+      const incomingFlag = String(data.SLS_FLAG ?? "").trim();
+      if (trnNo && seenFlags.has(trnNo)) {
+        const existingFlag = seenFlags.get(trnNo);
+        if (existingFlag === incomingFlag) {
+          log.warn(
+            `[AppendHourly] Skipping duplicate TRANSACTION_NO ${trnNo} for ter ${terNo} (already present)`,
+          );
+          return;
+        }
+        throw new TrnNoCollisionError(
+          `TRANSACTION_NO ${trnNo} collides in hourly batch for ter ${terNo}: existing SLS_FLAG=${existingFlag}, incoming SLS_FLAG=${incomingFlag}`,
         );
-        return;
       }
-      if (trnNo) seenTrnNos.add(trnNo);
+      if (trnNo) seenFlags.set(trnNo, incomingFlag);
       uniqueTransactions.push(data);
     });
 
@@ -606,20 +665,38 @@ class AyalaService {
     // already appeared earlier in the draft (keep the first). Even if the
     // append guards are bypassed, a duplicate must never reach UPLOADS_DIR —
     // Ayala's validator rejects the whole file if a TRANSACTION_NO repeats.
-    const seen = new Set();
+    //
+    // This runs off a cron job with no HTTP caller to hand a 409 to, so unlike
+    // appendTransaction/appendHourlyTransactions it cannot abort loudly on a
+    // genuine collision (different SLS_FLAG) without stranding the draft file
+    // indefinitely. It still distinguishes the two cases IN THE LOG so a
+    // collision that slipped past the append-time guards is visible at
+    // log.error rather than blending into routine resend noise at log.warn.
+    const seen = new Map();
     const uniqueBlocks = [];
     for (const block of blocks) {
       const trnLine = block.find((l) => l.startsWith("TRANSACTION_NO,"));
       const trnNo = trnLine
         ? trnLine.split(",")[1].replace(/"/g, "").trim()
         : "";
+      const slsFlagLine = block.find((l) => l.startsWith("SLS_FLAG,"));
+      const slsFlag = slsFlagLine
+        ? slsFlagLine.split(",")[1].replace(/"/g, "").trim()
+        : "";
       if (trnNo && seen.has(trnNo)) {
-        log.warn(
-          `[FinalizeHourlyDraft] Dropping duplicate TRANSACTION_NO ${trnNo} from ${tempFilename}`,
-        );
+        const existingFlag = seen.get(trnNo);
+        if (existingFlag === slsFlag) {
+          log.warn(
+            `[FinalizeHourlyDraft] Dropping duplicate TRANSACTION_NO ${trnNo} from ${tempFilename}`,
+          );
+        } else {
+          log.error(
+            `[FinalizeHourlyDraft] TRANSACTION_NO COLLISION in ${tempFilename}: ${trnNo} appears as SLS_FLAG=${existingFlag} AND SLS_FLAG=${slsFlag} — dropping the second occurrence, but this is a POS-side bug, not a re-send. Investigate the source transaction.`,
+          );
+        }
         continue;
       }
-      if (trnNo) seen.add(trnNo);
+      if (trnNo) seen.set(trnNo, slsFlag);
       uniqueBlocks.push(block);
     }
 

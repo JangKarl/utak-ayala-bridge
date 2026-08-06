@@ -422,6 +422,14 @@ class AyalaController {
 
       res.status(200).json({ message: "Transaction recorded", file: filename });
     } catch (error) {
+      if (error.code === "TRN_NO_COLLISION") {
+        // Distinct from a validation 400 or a transient 500: the POS should
+        // NOT queue-and-retry this — resending the identical payload yields
+        // the identical collision. Surfacing it loudly (rather than the old
+        // silent 200 skip) is exactly what would have caught task e5fad5f5.
+        log.error(`[Transaction] TRANSACTION_NO collision: ${error.message}`);
+        return res.status(409).json({ error: error.message, code: error.code });
+      }
       log.error("[Transaction] Critical Error:", error);
       res.status(500).json({ error: "Internal Server Error" });
     }
@@ -455,6 +463,10 @@ class AyalaController {
         .status(200)
         .json({ message: "Hourly transactions recorded", file: filename });
     } catch (error) {
+      if (error.code === "TRN_NO_COLLISION") {
+        log.error(`[Hourly] TRANSACTION_NO collision: ${error.message}`);
+        return res.status(409).json({ error: error.message, code: error.code });
+      }
       log.error("[Hourly] Critical Error:", error);
       res.status(500).json({ error: "Internal Server Error" });
     }
