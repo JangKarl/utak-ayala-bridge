@@ -5,20 +5,11 @@ const os = require("os");
 const path = require("path");
 
 /**
- * Coverage for the TRANSACTION_NO collision guard (task e5fad5f5 —
- * mamonaku_vermosa 2026-08-04). Before this fix, appendTransaction /
- * appendHourlyTransactions deduped purely on TRANSACTION_NO: a sale and a
- * refund that happened to share an identifier (the confirmed POS-side bug —
- * see ensureRefundCounter in utakmobile24) would silently skip the second
- * one and still return HTTP 200, so the POS never knew a row was dropped.
- * This guard distinguishes a genuine collision (same TRANSACTION_NO,
- * DIFFERENT SLS_FLAG) from a legitimate re-send (same TRANSACTION_NO, SAME
- * SLS_FLAG — a queue-drain retry) and throws TrnNoCollisionError only for
- * the former.
+ * TRANSACTION_NO collision guard: a genuine collision (same number, different
+ * SLS_FLAG) throws, while a legitimate re-send stays an idempotent skip.
  */
 
-// Swap TEMP_DIR/UPLOADS_DIR to a scratch directory before the service loads
-// them, exactly like test/tempDraftScan.test.js.
+// Swap TEMP_DIR/UPLOADS_DIR to scratch, as in test/tempDraftScan.test.js.
 const constPath = require.resolve("../src/constants/ayala");
 const realConstants = require(constPath);
 
@@ -120,8 +111,7 @@ test("appendHourlyTransactions THROWS when two records WITHIN one batch collide"
 
 test("finalizeHourlyDraft keeps the FIRST occurrence and drops a colliding second one (no throw — cron context)", () => {
   clearTemp();
-  // Bypass the append-time guard entirely by writing the draft directly, to
-  // exercise finalizeHourlyDraft's own defense-in-depth dedup in isolation.
+  // Write the draft directly to exercise finalizeHourlyDraft's dedup alone.
   const tempFilename = "temp_08_04_26_hour_20_ter_001.csv";
   const lines = [
     "CCCODE,84106000000001070",
