@@ -266,6 +266,55 @@ finalize window is 5 min.
 - Don't write anything non-final into `UPLOADS_DIR` — staging/backups belong in
   `STAGING_DIR`.
 
+## Field Support Tools (`tools/`)
+
+`tools/Fix Bridge Connection.cmd` — the merchant double-clicks this; it
+self-elevates and runs `tools/Fix-BridgeNetwork.ps1`. Support can pass the
+tablet's IP (`Fix Bridge Connection.cmd 192.168.0.55`) to test the POS side too.
+
+It is **safe to re-run**: a healthy setting is reported, never churned. Only a
+genuinely broken address triggers the repair. It writes a full transcript to
+`Desktop\ayala-bridge-check.txt` for the merchant to send in.
+
+The repair's whole point is that **nobody types a gateway** — the usual field
+fault is a hand-typed static IP whose gateway does not exist on that network, so
+IPv4 shows "No network access", the tray still says Running, and the POS
+heartbeat aborts at ~10 s. The script flips Wi-Fi to DHCP, reads what the router
+really serves, then re-applies that same subnet/gateway/DNS statically so the
+POS's stored `ipAddress` keeps working but cannot be wrong.
+
+| Failure | Handling |
+|---|---|
+| Bridge app not running | FAIL, stop — nothing else is meaningful |
+| Port held by another process | FAIL, names the process |
+| Non-default `PORT` in `.env` | read from the installed `.env`, not assumed |
+| Wi-Fi disconnected | FAIL, stop |
+| Static IP on the wrong subnet | repaired (DHCP → re-apply static) |
+| APIPA `169.254.x.x` (DHCP never answered) | repaired |
+| Duplicate IP on the LAN | repaired |
+| No default gateway | repaired |
+| Router serving no IPv4 at all | FAIL — "router fault, not a PC fault" |
+| Second default gateway (mall Ethernet) | WARN + exact action; **not** auto-cleared |
+| Another adapter on the same subnet | WARN |
+| Firewall **block** rule for the bridge | removed — a block beats an allow, and Cancel on the first Windows popup creates one |
+| Port not allowed inbound | rule added, profile Any |
+| Network profile Public | set to Private |
+| Third-party AV/firewall (McAfee etc.) | WARN — can't be fixed from here |
+| PC sleeping / hibernating on AC | disabled |
+| Wi-Fi power saving (idle drops) | powercfg → Maximum Performance, and `PnPCapabilities=24` |
+| MAC randomization breaking a DHCP reservation | disabled for the SSID |
+| Tablet on a different network | FAIL, only detectable with `-PosIp` |
+| Router AP/Client Isolation or Guest mode | FAIL — inferred from "ARP resolves but no ping reply" |
+
+Ends by printing the IP and port. Support then sets that in the tray (Bridge
+IP), the POS's Ayala settings, and RTDB `/{uid}/mode/ipAddress` — all three must
+agree.
+
+Reachable from the tray as **Fix Connection**, so a merchant never has to find
+the file. It ships via `extraResources` (`resources/tools/`), **not** `files[]`
+— the app is packed into `app.asar` and a `.cmd` inside the archive cannot be
+executed. The `.cmd` self-elevates, so Windows raises the UAC prompt itself.
+
 ## Client Side (for cross-repo work)
 
 The POS app (`utakmobile24`) talks to this bridge from

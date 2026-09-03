@@ -14,7 +14,14 @@
       "!test/**",
       "!uploads/**",
       "!dist/**",
+      "!tools/**",
       "!**/*.md"
+    ],
+    "extraResources": [
+      {
+        "from": "tools",
+        "to": "tools"
+      }
     ],
     "publish": {
       "provider": "github",

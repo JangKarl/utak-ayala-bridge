@@ -19,6 +19,8 @@ if (dotenvResult.error) {
 }
 
 // Load persisted user config before requiring bridge (so env vars are set first)
+const FIX_TOOL = "Fix Bridge Connection.cmd";
+
 const configPath = path.join(app.getPath("userData"), "config.json");
 let userConfig = {};
 try {
@@ -310,6 +312,26 @@ function buildAndSetTrayMenu(localIP) {
             body: `IP unchanged: http://${newIP}:${PORT}`,
           }).show();
         }
+      },
+    },
+    {
+      label: "Fix Connection",
+      click: () => {
+        // Shipped via extraResources, not files[] — inside app.asar it could not
+        // be executed. In dev it sits next to main.js.
+        const tool = app.isPackaged
+          ? path.join(process.resourcesPath, "tools", FIX_TOOL)
+          : path.join(__dirname, "tools", FIX_TOOL);
+        if (!fs.existsSync(tool)) {
+          log.error(`[FixConnection] tool missing: ${tool}`);
+          dialog.showErrorBox("Fix Connection", `Tool not found:\n${tool}`);
+          return;
+        }
+        log.info(`[FixConnection] launching ${tool}`);
+        // The .cmd self-elevates, so Windows raises the UAC prompt itself.
+        shell.openPath(tool).then((err) => {
+          if (err) dialog.showErrorBox("Fix Connection", err);
+        });
       },
     },
     {
