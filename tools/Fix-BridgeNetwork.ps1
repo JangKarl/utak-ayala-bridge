@@ -37,6 +37,9 @@ Head "Ayala Bridge app"
 
 $proc = Get-Process -Name 'ayala-bridge' -ErrorAction SilentlyContinue |
   Where-Object { $_.Path } | Select-Object -First 1
+# Quoted verbatim into the third-party firewall steps, so the operator never has
+# to go hunting for the exe. Falls back to the default install path.
+$BridgeExe = if ($proc) { $proc.Path } else { "$env:ProgramFiles\ayala-bridge\ayala-bridge.exe" }
 
 $Port = 3800
 $portFrom = 'default'
@@ -202,12 +205,24 @@ else {
   Note 'OK' "Port $Port is already open"
 }
 
+# A third-party suite keeps its OWN firewall, which the rule above does not touch.
+# Consumer McAfee/Norton ship no supported CLI to add a rule through, so the most
+# we can do is name the product and spell out the clicks in the summary.
+$ThirdParty = @()
+$ThirdPartyExe = $null
 foreach ($cls in 'FirewallProduct', 'AntiVirusProduct') {
   foreach ($p in (Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName $cls -ErrorAction SilentlyContinue)) {
     if ($p.displayName -notmatch 'Windows Defender|Windows Firewall|Microsoft Defender') {
-      Note 'WARN' "Other security software found: $($p.displayName). If the POS still cannot connect, allow port $Port in it too."
+      $ThirdParty += $p.displayName
+      if (-not $ThirdPartyExe -and $p.pathToSignedProductExe) {
+        $ThirdPartyExe = $p.pathToSignedProductExe
+      }
     }
   }
+}
+$ThirdParty = @($ThirdParty | Sort-Object -Unique)
+foreach ($n in $ThirdParty) {
+  Note 'WARN' "$n keeps its own firewall - if the POS still cannot connect, this is almost always why."
 }
 
 # ============================ 4. Staying awake ===============================
@@ -262,6 +277,36 @@ catch {
   Note 'FAIL' "Bridge did not answer /heartbeat on ${MyIp}:$Port - restart the Ayala Bridge app."
 }
 
+# The /heartbeat above is this PC calling its own address, which never crosses an
+# inbound firewall. The terminal registry is the only local record of a TABLET
+# getting through, so it is the one check here that proves inbound really works.
+$RegFile = 'C:\UTAK\Temp\terminal_registry.json'
+$lastSeen = $null
+if (Test-Path $RegFile) {
+  try {
+    $reg = Get-Content $RegFile -Raw | ConvertFrom-Json
+    foreach ($cc in $reg.PSObject.Properties) {
+      foreach ($ter in $cc.Value.PSObject.Properties) {
+        $ms = if ($ter.Value.lastSeenAt) { $ter.Value.lastSeenAt } else { $ter.Value.updatedAt }
+        if ($ms) {
+          $when = [DateTimeOffset]::FromUnixTimeMilliseconds([int64]$ms).LocalDateTime
+          if (-not $lastSeen -or $when -gt $lastSeen) { $lastSeen = $when }
+        }
+      }
+    }
+  }
+  catch { Note 'WARN' "Could not read the terminal registry: $($_.Exception.Message)" }
+}
+if (-not $lastSeen) {
+  Note 'WARN' "No tablet has EVER reached this bridge. If this store worked before, something is blocking incoming connections."
+}
+elseif ($lastSeen -gt (Get-Date).AddMinutes(-15)) {
+  Note 'OK' "A tablet reached this bridge at $($lastSeen.ToString('h:mm tt')) - incoming connections work."
+}
+else {
+  Note 'WARN' "No tablet has reached this bridge since $($lastSeen.ToString('d MMM, h:mm tt')) - incoming connections look blocked."
+}
+
 if ($PosIp) {
   $sameNet = $false
   try { $sameNet = (NetworkOf $PosIp $ip4.PrefixLength) -eq (NetworkOf $MyIp $ip4.PrefixLength) } catch {}
@@ -299,6 +344,35 @@ elseif ($warn) {
 }
 else {
   Write-Host "`nAll checks passed." -ForegroundColor Green
+}
+
+if ($ThirdParty) {
+  $sec = $ThirdParty[0]
+  Write-Host "`n---- IF THE TABLET STILL CANNOT CONNECT ----" -ForegroundColor Yellow
+  Write-Host "  Windows Firewall is already set. $sec has a SEPARATE one" -ForegroundColor Yellow
+  Write-Host "  that this tool is not allowed to change." -ForegroundColor Yellow
+  Write-Host ""
+  Write-Host "  FAST TEST: switch the $sec firewall OFF for 2 minutes and let" -ForegroundColor Yellow
+  Write-Host "  the tablet try again. If it connects, that was the cause." -ForegroundColor Yellow
+  Write-Host "  Turn it back ON, then do the 3 steps below." -ForegroundColor Yellow
+  Write-Host ""
+  Write-Host "  1. $sec -> Firewall -> Network Connections" -ForegroundColor Yellow
+  if ($ssid) {
+    Write-Host "     Set '$ssid' to TRUSTED / HOME (not Public)." -ForegroundColor Yellow
+  }
+  else {
+    Write-Host "     Set this Wi-Fi to TRUSTED / HOME (not Public)." -ForegroundColor Yellow
+  }
+  Write-Host "  2. $sec -> Firewall -> Internet Connections for Programs -> Add" -ForegroundColor Yellow
+  Write-Host "     Pick this file: $BridgeExe" -ForegroundColor Yellow
+  Write-Host "     Give it FULL access (incoming AND outgoing)." -ForegroundColor Yellow
+  Write-Host "  3. $sec -> Firewall -> Ports and System Services -> Add" -ForegroundColor Yellow
+  Write-Host "     Name it 'Ayala Bridge', TCP port $Port, incoming." -ForegroundColor Yellow
+  if ($ThirdPartyExe -and (Test-Path $ThirdPartyExe)) {
+    Write-Host "`n  Opening $sec for you..." -ForegroundColor Yellow
+    Start-Process $ThirdPartyExe -ErrorAction SilentlyContinue
+  }
+  Write-Host ""
 }
 
 Write-Host "`nNow set $MyIp in BOTH:" -ForegroundColor White
