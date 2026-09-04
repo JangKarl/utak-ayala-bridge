@@ -58,8 +58,8 @@ foreach ($p in $envPaths) {
 }
 Note 'OK' "Port $Port (from $portFrom)"
 
-$listener = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue |
-  Select-Object -First 1
+$listeners = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)
+$listener = $listeners | Select-Object -First 1
 if (-not $listener) {
   Note 'FAIL' "Nothing is listening on port $Port - the Ayala Bridge app is not running."
   Write-Host "`n  ACTION: start Ayala Bridge from the desktop shortcut, then run this again." -ForegroundColor Red
@@ -72,6 +72,19 @@ if ($owner -and $owner.ProcessName -notmatch 'ayala') {
 }
 else {
   Note 'OK' "Bridge is listening on port $Port"
+}
+
+# Listening is NOT the same as reachable. A socket bound only to loopback still
+# answers this PC's own /heartbeat and refuses every tablet - indistinguishable
+# from here, opposite for the store. Check WHERE it is bound, not just that
+# something is.
+$openBind = $listeners |
+  Where-Object { $_.LocalAddress -notmatch '^(127\.|::1$)' } | Select-Object -First 1
+if (-not $openBind) {
+  Note 'FAIL' "Port $Port is bound to this PC only (loopback). No tablet can ever reach it - restart the Ayala Bridge app."
+}
+else {
+  Note 'OK' "Port $Port is bound to $($openBind.LocalAddress) - open to the network"
 }
 
 # ============================ 2. Wi-Fi adapter ===============================
@@ -183,10 +196,18 @@ Note 'OK' "Network profile: $prof"
 
 # Clicking Cancel on the first Windows popup leaves a BLOCK rule behind, and a
 # block always beats an allow. This is the invisible one.
+# A block can name the PROGRAM or the PORT. Only checking the program missed the
+# port-scoped kind entirely, which looks exactly the same from the tablet.
 $blocked = @()
+$broad = @()
 foreach ($r in (Get-NetFirewallRule -Direction Inbound -Action Block -Enabled True -ErrorAction SilentlyContinue)) {
   $p = ($r | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue).Program
-  if ($p -and $p -match 'ayala') { $blocked += $r }
+  if ($p -and $p -match 'ayala') { $blocked += $r; continue }
+  $lp = ($r | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue).LocalPort
+  if ($lp -contains "$Port") { $blocked += $r; continue }
+  # A rule blocking EVERY inbound port may be deliberate policy on a shared PC.
+  # Name it, never delete it - removing it could open far more than this bridge.
+  if (-not $p -and $lp -contains 'Any') { $broad += $r }
 }
 if ($blocked) {
   $blocked | Remove-NetFirewallRule -ErrorAction SilentlyContinue
@@ -194,6 +215,9 @@ if ($blocked) {
 }
 else {
   Note 'OK' "No blocking rule for the bridge"
+}
+foreach ($r in $broad) {
+  Note 'WARN' "Rule '$($r.DisplayName)' blocks ALL incoming connections. Left in place on purpose - check whether it is meant to be there."
 }
 
 if (-not (Get-NetFirewallRule -DisplayName "Ayala Bridge $Port" -ErrorAction SilentlyContinue)) {
@@ -208,21 +232,38 @@ else {
 # A third-party suite keeps its OWN firewall, which the rule above does not touch.
 # Consumer McAfee/Norton ship no supported CLI to add a rule through, so the most
 # we can do is name the product and spell out the clicks in the summary.
+# productState is 0xPPSSUU; the middle byte's 0x10 bit means "this product is ON".
+# An expired or switched-off trial stays REGISTERED here, and warning about one
+# sends the reader hunting through settings that are blocking nothing.
 $ThirdParty = @()
 $ThirdPartyExe = $null
+$ThirdPartyOff = @()
 foreach ($cls in 'FirewallProduct', 'AntiVirusProduct') {
   foreach ($p in (Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName $cls -ErrorAction SilentlyContinue)) {
-    if ($p.displayName -notmatch 'Windows Defender|Windows Firewall|Microsoft Defender') {
+    if ($p.displayName -match 'Windows Defender|Windows Firewall|Microsoft Defender') { continue }
+    $on = $false
+    if ($null -ne $p.productState) {
+      $on = ((([int]$p.productState -shr 8) -band 0xFF) -band 0x10) -ne 0
+    }
+    if ($on) {
       $ThirdParty += $p.displayName
       if (-not $ThirdPartyExe -and $p.pathToSignedProductExe) {
         $ThirdPartyExe = $p.pathToSignedProductExe
       }
     }
+    else {
+      $ThirdPartyOff += $p.displayName
+    }
   }
 }
 $ThirdParty = @($ThirdParty | Sort-Object -Unique)
+$ThirdPartyOff = @($ThirdPartyOff | Sort-Object -Unique |
+  Where-Object { $ThirdParty -notcontains $_ })
 foreach ($n in $ThirdParty) {
-  Note 'WARN' "$n keeps its own firewall - if the POS still cannot connect, this is almost always why."
+  Note 'WARN' "$n keeps its own firewall and it is ON - if the POS still cannot connect, this is almost always why."
+}
+foreach ($n in $ThirdPartyOff) {
+  Note 'OK' "$n is installed but switched OFF - it is not what is blocking the POS."
 }
 
 # ============================ 4. Staying awake ===============================
