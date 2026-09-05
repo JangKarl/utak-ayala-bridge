@@ -509,6 +509,7 @@ class AyalaController {
       // logged but does NOT block the upload — rejecting /eod/start would
       // strand that terminal's sales. Hard enforcement lives at
       // /terminal/register (the POS setup modal).
+      let terminalConflict = null;
       if (device_id) {
         try {
           const reg = terminalRegistryService.register({
@@ -518,6 +519,14 @@ class AyalaController {
             uid: uid || null,
           });
           if (!reg.ok && reg.conflict) {
+            // Returned as well as logged: a duplicate TER_NO overwrites
+            // another terminal's EOD column, and nobody reads the store PC.
+            terminalConflict = {
+              terNo: String(ter_no).trim().padStart(3, "0"),
+              requestedBy: device_id,
+              ownedBy: (reg.owner && reg.owner.deviceId) || null,
+              ownerName: (reg.owner && reg.owner.deviceName) || null,
+            };
             log.warn(
               `[EodStart] TER_NO ${ter_no} conflict on ccode=${ccode}: requested by device=${device_id}, owned by device=${reg.owner && reg.owner.deviceId}. Proceeding with upload anyway.`,
             );
@@ -533,7 +542,10 @@ class AyalaController {
       log.info(
         `[EodStart] ccode=${ccode} mmddyy=${mmddyy} terNo=${ter_no} -> acquired=${result.acquired} leader=${result.startedBy}`,
       );
-      return res.status(200).json(result);
+      // Additive: older clients ignore it, the upload is never blocked by it.
+      return res
+        .status(200)
+        .json(terminalConflict ? { ...result, terminalConflict } : result);
     } catch (error) {
       log.error("[EodStart] Critical Error:", error);
       return res.status(500).json({ error: "Internal Server Error" });
