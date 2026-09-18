@@ -25,6 +25,36 @@ function NetworkOf($ip, $prefix) {
   $m = (4294967295 -shl (32 - $prefix)) -band 4294967295
   return ($v -band $m)
 }
+# Both callers below apply a static address the same way. New-NetIPAddress alone
+# does not reliably take the interface off DHCP, and a DHCP client left enabled
+# overwrites the address at the next renewal - the exact fault this is here to
+# stop, only now invisible because the tool already reported FIXED.
+#
+# Returns $true only if the address is really on. Between the Remove and the New
+# the adapter has NO address, and $ErrorActionPreference is 'Stop', so an
+# unguarded failure there would abort the whole script and leave a store with no
+# network to fix itself over. The healthy path calls this on every working PC,
+# not just already-broken ones, so the catch restores DHCP rather than strand it.
+function PinStatic($idx, $ip, $prefix, $gw) {
+  Set-NetIPInterface -InterfaceIndex $idx -Dhcp Disabled -ErrorAction SilentlyContinue
+  Remove-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
+  Remove-NetRoute -InterfaceIndex $idx -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue
+  try {
+    New-NetIPAddress -InterfaceIndex $idx -IPAddress $ip -PrefixLength $prefix `
+      -DefaultGateway $gw -ErrorAction Stop | Out-Null
+    Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses $gw, '8.8.8.8' -ErrorAction SilentlyContinue
+    return $true
+  }
+  catch {
+    Set-NetIPInterface -InterfaceIndex $idx -Dhcp Enabled -ErrorAction SilentlyContinue
+    Set-DnsClientServerAddress -InterfaceIndex $idx -ResetServerAddresses -ErrorAction SilentlyContinue
+    # Guarded: ipconfig /renew "" matches EVERY adapter, not none.
+    $n = (Get-NetAdapter -InterfaceIndex $idx -ErrorAction SilentlyContinue).Name
+    if ($n) { ipconfig /renew "$n" | Out-Null }
+    Note 'WARN' "Could not fix the address in place: $($_.Exception.Message). Put this PC back on DHCP - nothing was made worse, but the address can still change."
+    return $false
+  }
+}
 
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
     ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -117,8 +147,21 @@ elseif (-not (Test-Connection $gw -Count 2 -Quiet -ErrorAction SilentlyContinue)
   $broken = "an unreachable gateway ($gw) - this address belongs to a different network"
 }
 
-if (-not $broken) {
-  Note 'OK' "IP $($ip4.IPAddress)/$($ip4.PrefixLength), gateway $gw reachable"
+if (-not $broken -and $ip4.PrefixOrigin -eq 'Dhcp') {
+  # A healthy address is still a MOVING one while it comes from DHCP. The lease
+  # renews, the router hands out a different number, and every stored copy of the
+  # old one - tray, POS Ayala settings, RTDB - now points at nothing, with no
+  # symptom on this PC to show for it. Freeze it exactly where it is: nothing to
+  # re-type anywhere, and a re-run reports OK because the origin is then Manual.
+  # ponytail: the address stays inside the router's DHCP pool, so a lapsed lease
+  # could still be re-offered to another device. That surfaces as a duplicate IP,
+  # which the repair below already detects and moves off on the next run.
+  if (PinStatic $idx $ip4.IPAddress $ip4.PrefixLength $gw) {
+    Note 'FIXED' "IP $($ip4.IPAddress) came from DHCP and would have changed by itself - pinned so it stays."
+  }
+}
+elseif (-not $broken) {
+  Note 'OK' "IP $($ip4.IPAddress)/$($ip4.PrefixLength) is fixed, gateway $gw reachable"
 }
 else {
   Note 'WARN' "This PC has $broken. Repairing..."
@@ -159,11 +202,9 @@ else {
       }
     }
   }
-  Remove-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
-  Remove-NetRoute -InterfaceIndex $idx -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue
-  New-NetIPAddress -InterfaceIndex $idx -IPAddress $target -PrefixLength $prefix -DefaultGateway $gw | Out-Null
-  Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses $gw, '8.8.8.8'
-  Note 'FIXED' "Address set to $target/$prefix, gateway $gw"
+  if (PinStatic $idx $target $prefix $gw) {
+    Note 'FIXED' "Address set to $target/$prefix, gateway $gw"
+  }
   $cfg = Get-NetIPConfiguration -InterfaceIndex $idx
   $ip4 = $cfg.IPv4Address | Select-Object -First 1
 }
@@ -302,6 +343,18 @@ if ($ssid) {
 # ============================ 5. Proof it works ==============================
 Head "Verification"
 
+# Proves the pin took. If the origin is still Dhcp the address WILL move again
+# and every stored copy of it goes stale - the one failure this script must never
+# report as FIXED.
+$originNow = (Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  Where-Object { $_.IPAddress -eq $MyIp }).PrefixOrigin
+if ($originNow -eq 'Manual') {
+  Note 'OK' "$MyIp is fixed - it cannot change by itself"
+}
+else {
+  Note 'WARN' "$MyIp still comes from DHCP and can change on its own. Ask whoever owns the router for a DHCP reservation on MAC $($nic.MacAddress)."
+}
+
 $gwNow = (Get-NetIPConfiguration -InterfaceIndex $idx).IPv4DefaultGateway
 if ($gwNow -and (Test-Connection $($gwNow[0].NextHop) -Count 2 -Quiet -ErrorAction SilentlyContinue)) {
   Note 'OK' "Router is reachable"
@@ -419,6 +472,11 @@ if ($ThirdParty) {
 Write-Host "`nNow set $MyIp in BOTH:" -ForegroundColor White
 Write-Host "  1. Ayala Bridge tray icon -> Bridge IP" -ForegroundColor White
 Write-Host "  2. The POS tablet -> Ayala settings -> IP address" -ForegroundColor White
+# This address is fixed on the PC, but the router does not know that and may hand
+# the same number to a new device once the old lease lapses. A reservation is the
+# only place that can be made impossible, and only its owner can set it.
+Write-Host "`nBest done once, by whoever manages the router:" -ForegroundColor White
+Write-Host "  reserve $MyIp for MAC $($nic.MacAddress) in the router's DHCP settings." -ForegroundColor White
 Write-Host "`nOn the tablet's browser this must show a reply:" -ForegroundColor White
 Write-Host "  http://${MyIp}:$Port/heartbeat" -ForegroundColor White
 Write-Host "`nSend this file to UTAK support: $Log`n" -ForegroundColor White
