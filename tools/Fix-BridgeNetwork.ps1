@@ -25,35 +25,44 @@ function NetworkOf($ip, $prefix) {
   $m = (4294967295 -shl (32 - $prefix)) -band 4294967295
   return ($v -band $m)
 }
-# Both callers below apply a static address the same way. New-NetIPAddress alone
-# does not reliably take the interface off DHCP, and a DHCP client left enabled
-# overwrites the address at the next renewal - the exact fault this is here to
-# stop, only now invisible because the tool already reported FIXED.
+function MaskOf($prefix) {
+  # 24 -> 255.255.255.0. Built from the bit string rather than shifted ints, for
+  # the same reason NetworkOf above avoids 0xFFFFFFFF.
+  $bits = ('1' * $prefix).PadRight(32, '0')
+  return ((0, 8, 16, 24 | ForEach-Object { [Convert]::ToInt32($bits.Substring($_, 8), 2) }) -join '.')
+}
+
+# netsh, NOT New-NetIPAddress. v2.52.11 used the Net* cmdlets here and they wrote
+# only the runtime store: the address read back as Manual and the tool reported
+# "it cannot change by itself", but the registry under
+#   ...\Tcpip\Parameters\Interfaces\{GUID}
+# still said EnableDHCP=1 with no IPAddress, so the very next reboot handed the PC
+# a fresh lease. Reproduced on two machines a week apart. netsh applies AND
+# persists in one step, which is also what the Windows settings UI does.
 #
-# Returns $true only if the address is really on. Between the Remove and the New
-# the adapter has NO address, and $ErrorActionPreference is 'Stop', so an
-# unguarded failure there would abort the whole script and leave a store with no
-# network to fix itself over. The healthy path calls this on every working PC,
-# not just already-broken ones, so the catch restores DHCP rather than strand it.
+# It replaces the address outright, so unlike the old Remove-then-New there is no
+# window where the adapter has no address at all.
+#
+# Returns $true only if the address really took.
 function PinStatic($idx, $ip, $prefix, $gw) {
-  Set-NetIPInterface -InterfaceIndex $idx -Dhcp Disabled -ErrorAction SilentlyContinue
-  Remove-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
-  Remove-NetRoute -InterfaceIndex $idx -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue
-  try {
-    New-NetIPAddress -InterfaceIndex $idx -IPAddress $ip -PrefixLength $prefix `
-      -DefaultGateway $gw -ErrorAction Stop | Out-Null
-    Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses $gw, '8.8.8.8' -ErrorAction SilentlyContinue
-    return $true
-  }
-  catch {
-    Set-NetIPInterface -InterfaceIndex $idx -Dhcp Enabled -ErrorAction SilentlyContinue
-    Set-DnsClientServerAddress -InterfaceIndex $idx -ResetServerAddresses -ErrorAction SilentlyContinue
-    # Guarded: ipconfig /renew "" matches EVERY adapter, not none.
-    $n = (Get-NetAdapter -InterfaceIndex $idx -ErrorAction SilentlyContinue).Name
-    if ($n) { ipconfig /renew "$n" | Out-Null }
-    Note 'WARN' "Could not fix the address in place: $($_.Exception.Message). Put this PC back on DHCP - nothing was made worse, but the address can still change."
+  $name = (Get-NetAdapter -InterfaceIndex $idx -ErrorAction SilentlyContinue).Name
+  if (-not $name) {
+    Note 'WARN' "Could not read the Wi-Fi adapter name - address left as it is."
     return $false
   }
+  # No 2>&1: redirecting a native command's stderr turns it into error records,
+  # which $ErrorActionPreference='Stop' would throw on. netsh reports failure
+  # through its exit code, so use that.
+  $out = netsh interface ip set address name="$name" static $ip (MaskOf $prefix) $gw
+  if ($LASTEXITCODE -ne 0) {
+    netsh interface ip set address name="$name" dhcp | Out-Null
+    netsh interface ip set dns name="$name" dhcp | Out-Null
+    Note 'WARN' "Could not fix the address in place: $out. Put this PC back on DHCP - nothing was made worse, but the address can still change."
+    return $false
+  }
+  netsh interface ip set dns name="$name" static $gw primary | Out-Null
+  netsh interface ip add dns name="$name" 8.8.8.8 index=2 | Out-Null
+  return $true
 }
 
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
@@ -343,16 +352,24 @@ if ($ssid) {
 # ============================ 5. Proof it works ==============================
 Head "Verification"
 
-# Proves the pin took. If the origin is still Dhcp the address WILL move again
-# and every stored copy of it goes stale - the one failure this script must never
-# report as FIXED.
-$originNow = (Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+# Two different questions, and v2.52.11 only asked the first one. Get-NetIPAddress
+# reads the ACTIVE store - what is true this second. The registry is what Windows
+# reads back after a restart. Checking only the active store is how the tool came
+# to promise "it cannot change by itself" about a pin the next reboot discarded.
+$liveOrigin = (Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue |
   Where-Object { $_.IPAddress -eq $MyIp }).PrefixOrigin
-if ($originNow -eq 'Manual') {
-  Note 'OK' "$MyIp is fixed - it cannot change by itself"
+$reg = Get-ItemProperty ("HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\" +
+  $nic.InterfaceGuid) -ErrorAction SilentlyContinue
+$persisted = $reg -and $reg.EnableDHCP -eq 0 -and ($reg.IPAddress -contains $MyIp)
+
+if ($liveOrigin -eq 'Manual' -and $persisted) {
+  Note 'OK' "$MyIp is fixed and stays fixed after a restart"
+}
+elseif ($liveOrigin -eq 'Manual') {
+  Note 'WARN' "$MyIp is set now but was NOT saved - restarting this PC will put it back on a router-assigned address. Ask whoever owns the router to reserve $MyIp for MAC $($nic.MacAddress)."
 }
 else {
-  Note 'WARN' "$MyIp still comes from DHCP and can change on its own. Ask whoever owns the router for a DHCP reservation on MAC $($nic.MacAddress)."
+  Note 'WARN' "$MyIp still comes from the router and can change on its own. Ask whoever owns the router to reserve it for MAC $($nic.MacAddress)."
 }
 
 $gwNow = (Get-NetIPConfiguration -InterfaceIndex $idx).IPv4DefaultGateway
