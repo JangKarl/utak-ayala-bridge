@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:">
+<title>Pair a POS — Ayala Bridge</title>
+<link rel="stylesheet" href="ui/pairing.css">
+</head><body>
+<header><img src="ui/utak-logo.png" alt="UTAK POS"><span>Ayala Bridge</span></header>
+<main>
+  <div>
+    <h1>Pair a POS</h1>
+    <p class="lead">Pairing works on your local network, even without internet.</p>
+  </div>
+
+  <form id="form" class="card">
+    <label for="ccode">Store code</label>
+    <div class="row">
+      <input id="ccode" maxlength="40" pattern="[A-Za-z0-9]+" required autocomplete="off" placeholder="Tenant code + contract number">
+      <button class="btn-primary">Create pairing code</button>
+    </div>
+    <p class="hint">Exactly as saved in the POS Ayala Settings, including leading zeros.</p>
+  </form>
+
+  <p id="message" role="status"></p>
+
+  <section id="invite" class="card invite" hidden>
+    <img id="qr" alt="POS pairing QR code">
+    <div>
+      <h2>Scan the QR on the POS</h2>
+      <p class="hint">No camera? Type this code in Ayala Settings → Secure bridge.</p>
+      <div id="code" class="code"></div>
+      <span id="countdown" class="badge"></span>
+      <p class="hint">Single use. Keep this window open until the POS is paired.</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Paired devices</h2>
+      <button id="refresh" type="button" class="btn-outline">Refresh</button>
+    </div>
+    <ul id="devices"></ul>
+  </section>
+</main>
+<script src="pairingRenderer.js"></script>
+</body></html>
