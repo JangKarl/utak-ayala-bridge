@@ -265,11 +265,19 @@ else {
   Note 'OK' "Port $Port is already open"
 }
 
-# The HTTP-era rule opened 3800 on every profile; nothing listens there any more.
+# Old POS use HTTP 3800 only while the tray's "Allow old POS" is on: keep the
+# port open (local subnet only) while the bridge listens there, close it after.
 $legacy = @(Get-NetFirewallRule -DisplayName 'Ayala Bridge 3800' -ErrorAction SilentlyContinue)
-if ($legacy.Count) {
+if (Get-NetTCPConnection -State Listen -LocalPort 3800 -ErrorAction SilentlyContinue) {
+  if (-not $legacy.Count) {
+    New-NetFirewallRule -DisplayName 'Ayala Bridge 3800' -Direction Inbound -Action Allow `
+      -Protocol TCP -LocalPort 3800 -RemoteAddress LocalSubnet -Profile Private,Domain | Out-Null
+    Note 'FIXED' "Opened HTTP port 3800 for POS not yet paired"
+  }
+}
+elseif ($legacy.Count) {
   $legacy | Remove-NetFirewallRule
-  Note 'FIXED' "Closed the old HTTP port 3800 rule"
+  Note 'FIXED' "Closed HTTP port 3800 (old POS access is off)"
 }
 
 # A third-party suite keeps its OWN firewall, which the rule above does not touch.

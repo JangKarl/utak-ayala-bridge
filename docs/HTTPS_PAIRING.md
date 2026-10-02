@@ -1,10 +1,16 @@
 # HTTPS pairing (Android pilot)
 
 This branch changes the bridge protocol to authenticated HTTPS on TCP 3843.
-It does not listen on HTTP 3800. Install matching desktop and Android builds together.
-Existing HTTP POS versions, iOS, and browser requests cannot use this listener.
-The POS needs a new native build; CodePush alone is not enough.
+iOS and browser requests cannot use this listener, and the POS needs a new native build (CodePush alone is not enough).
 No release or production configuration change is part of this work.
+
+## Migration window (old POS)
+
+Updating the bridge must not strand POS devices still on the HTTP build, so the bridge also keeps the old,
+unauthenticated HTTP API on port 3800 while the tray's **Allow old POS (HTTP port 3800)** is checked (the default).
+Paired POS never use it: the new app only talks HTTPS and never falls back.
+Once every POS in the store runs the new build and is paired, uncheck it (saved per bridge); the Fix Bridge Connection
+tool then closes the 3800 firewall rule. A later release removes the HTTP listener entirely.
 
 ## Pairing
 

@@ -1,6 +1,7 @@
 const https = require("node:https");
 const { createSecureApp } = require("./src/security/secureApp");
 const { HTTPS_PORT } = require("./src/security/bridgeSecurity");
+const { startLegacyHttp, LEGACY_HTTP_PORT } = require("./src/security/legacyHttp");
 const fs = require("fs");
 const path = require("path");
 const log = require("electron-log");
@@ -50,8 +51,13 @@ if (require.main === module) {
   throw new Error("Start the Electron app to access Windows secure storage and pairing.");
 }
 
+/** Migration window: old POS builds keep reaching the bridge over HTTP until turned off. */
+const startLegacyServer = () => startLegacyHttp(ayalaRoutes);
+
 module.exports = {
   startServer,
+  startLegacyServer,
+  LEGACY_HTTP_PORT,
   restartJobs,
   getLocalIPAddress,
   listLocalIPv4Addresses,

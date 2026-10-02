@@ -34,6 +34,8 @@ if (userConfig.uploadsDir) {
 
 const {
   startServer,
+  startLegacyServer,
+  LEGACY_HTTP_PORT,
   restartJobs,
   getLocalIPAddress,
   listLocalIPv4Addresses,
@@ -45,6 +47,7 @@ const { BridgeSecurity } = require("./src/security/bridgeSecurity");
 const { showPairingWindow } = require("./src/security/pairingWindow");
 let bridgeSecurity;
 let renewingCertificate = false;
+let legacyServer = null;
 let tray = null;
 let currentIP = null;
 let ipWatcherInterval = null;
@@ -58,6 +61,39 @@ const UPDATE_CHECK_MS = 6 * 60 * 60 * 1000; // 6 hours
 // Once an update is downloaded, how often we re-check for a safe window to
 // apply it automatically (no reprocess in flight, no terminal online).
 const AUTO_INSTALL_RETRY_MS = 15 * 60 * 1000; // 15 minutes
+
+// Old POS (pre-HTTPS builds) reach the bridge on HTTP 3800 until this is turned
+// off for the store. On by default so updating the bridge never strands them.
+async function setLegacyHttp(enabled) {
+  if (enabled && !legacyServer) {
+    try {
+      legacyServer = await startLegacyServer();
+      log.warn(`[LegacyHttp] Old POS allowed on http port ${LEGACY_HTTP_PORT} (unauthenticated)`);
+    } catch (err) {
+      log.error(`[LegacyHttp] Could not open port ${LEGACY_HTTP_PORT}:`, err.message);
+    }
+  } else if (!enabled && legacyServer) {
+    legacyServer.closeAllConnections();
+    legacyServer.close();
+    legacyServer = null;
+    log.info(`[LegacyHttp] Port ${LEGACY_HTTP_PORT} closed; only paired HTTPS POS can connect`);
+  }
+}
+
+async function toggleLegacyHttp(menuItem) {
+  if (!menuItem.checked) {
+    const choice = await dialog.showMessageBox({
+      type: "warning", title: "Turn off old POS access",
+      message: "POS devices that are not updated and paired will lose the bridge. Turn off HTTP port " + LEGACY_HTTP_PORT + "?",
+      buttons: ["Cancel", "Turn off"], defaultId: 0, cancelId: 0,
+    });
+    if (choice.response !== 1) return buildAndSetTrayMenu(currentIP);
+  }
+  userConfig.allowLegacyHttp = menuItem.checked;
+  saveUserConfig();
+  await setLegacyHttp(menuItem.checked);
+  buildAndSetTrayMenu(currentIP);
+}
 
 function saveUserConfig() {
   try {
@@ -245,6 +281,7 @@ function buildAndSetTrayMenu(localIP) {
       submenu: ipItems,
     },
     { label: `HTTPS Port: ${PORT}`, enabled: false },
+    { label: `Allow old POS (HTTP port ${LEGACY_HTTP_PORT})`, type: "checkbox", checked: !!legacyServer, click: toggleLegacyHttp },
     { label: "Pair / Revoke POS", click: () => showPairingWindow(bridgeSecurity, getEffectiveIP) },
     { label: "Certificate expires: " + new Date(bridgeSecurity.state.identity.expiresAt).toLocaleDateString(), enabled: false },
     { label: "Renew HTTPS Certificate", click: async () => {
@@ -417,6 +454,7 @@ if (!gotTheLock) {
     try {
       bridgeSecurity = await BridgeSecurity.open({ file: path.join(app.getPath("userData"), "https-security.bin"), storage: safeStorage });
       await startServer(bridgeSecurity);
+      await setLegacyHttp(userConfig.allowLegacyHttp !== false);
       log.info("Bridge server started successfully.");
     } catch (err) {
       log.error("[Startup] Failed to start secure bridge server:", err.message);

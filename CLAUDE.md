@@ -22,7 +22,9 @@ GitHub repo.
   GitHub token is only needed at *publish* time (see below) and must never be
   shipped with the client.
 - **Port:** `3843`, HTTPS, fixed (the POS client pins it). Each POS must be
-  paired first — see [docs/HTTPS_PAIRING.md](docs/HTTPS_PAIRING.md).
+  paired first — see [docs/HTTPS_PAIRING.md](docs/HTTPS_PAIRING.md). During the
+  migration window the old unauthenticated HTTP API also listens on `3800` until
+  the tray's "Allow old POS" is unchecked ([src/security/legacyHttp.js](src/security/legacyHttp.js)).
 - **Client:** `utakmobile24` → `src/mall/ayala/_shared/...` (helpers + `BridgeMonitorService`).
 
 ## Run / Build
