@@ -2,13 +2,13 @@
 
 > Companion doc for AI agents and new contributors. Authoritative current
 > reference. (An older `.github/copilot-instructions.md` exists but is partly
-> stale — e.g. it says port 3000; the real default is **3800**. Prefer this file.)
+> stale — e.g. it says port 3000; the real port is **3843** (HTTPS). Prefer this file.)
 
 ## What This Is
 
 A Windows desktop service that sits between Utak POS devices (the React Native
 app `utakmobile24`, mall mode `ayala`) and Ayala's mall reporting system. POS
-devices push transaction / end-of-day data over HTTP on the local network; the
+devices push transaction / end-of-day data over authenticated HTTPS on the local network; the
 bridge generates Ayala-compliant CSV text files into the mall's pickup folder
 and coordinates **multiple terminals that share one store** so their
 consolidated reports stay correct.
@@ -21,14 +21,17 @@ GitHub repo.
   The repo is **public**, so clients download/update with **no token**. A
   GitHub token is only needed at *publish* time (see below) and must never be
   shipped with the client.
-- **Default port:** `3800` (override with `PORT` in `.env`).
+- **Port:** `3843`, HTTPS, fixed (the POS client pins it). Each POS must be
+  paired first — see [docs/HTTPS_PAIRING.md](docs/HTTPS_PAIRING.md). During the
+  migration window the old unauthenticated HTTP API also listens on `3800` until
+  the tray's "Allow old POS" is unchecked ([src/security/legacyHttp.js](src/security/legacyHttp.js)).
 - **Client:** `utakmobile24` → `src/mall/ayala/_shared/...` (helpers + `BridgeMonitorService`).
 
 ## Run / Build
 
 ```bash
 npm install
-npm run dev      # Express server only, headless (require('./bridge').startServer())
+npm run dev      # Same as start: HTTPS needs Electron safeStorage, so there is no headless mode
 npm start        # Full Electron app + system tray
 npm run build    # Windows NSIS installer -> dist/
 npm run publish  # build + publish a release to GitHub (drives OTA auto-update)
@@ -38,8 +41,8 @@ npm test         # node --test test/
 `npm test` runs the Node test runner over `test/` — no framework. It covers the
 pure, file-level logic: atomic writes, the terminal registry, store-tz date
 stamps, and which hourly drafts an EOD may finalize. The tray, the updater and
-the Express layer are **not** covered — verify those by running `npm run dev` and
-exercising the HTTP endpoints.
+the Express layer are **not** covered — except `test/httpsPairing.test.js`, which
+runs real TLS pairing and authenticated routes against a generated certificate.
 
 Some date cases **must** run in a spawned child process: Node resolves the local
 timezone once at startup, so setting `process.env.TZ` inside a test proves
@@ -63,10 +66,11 @@ Two cooperating layers, intentionally separable:
 | Layer | File | Responsibility |
 |---|---|---|
 | Electron shell | [main.js](main.js) | System tray, device list menu, IP watcher, directory picker, auto-updater, single-instance lock |
-| HTTP server | [bridge.js](bridge.js) | Express app, mounts routes, starts cron jobs + time watcher |
+| HTTPS server | [bridge.js](bridge.js) | TLS server around the secure Express app, mounts routes, starts cron jobs + time watcher |
+| Security | [src/security/](src/security/) | Bridge identity/cert, pairing (QR + typed code), per-device credentials, request scope checks, tray pairing window |
 
-`bridge.js` exports `startServer()` so the server runs standalone in dev without
-Electron. `main.js` loads `.env` (resolved relative to the executable when
+`bridge.js` exports `startServer(security)`; it needs a `BridgeSecurity` opened with
+Electron `safeStorage`, so it no longer runs standalone. `main.js` loads `.env` (resolved relative to the executable when
 packaged — CWD is unreliable under auto-start) and persisted `config.json` from
 the Electron `userData` dir before requiring `bridge.js`.
 
@@ -165,7 +169,10 @@ TRANSACTION_NO"*.
 
 ## HTTP API
 
-All POST bodies are JSON. `ccode` = `tenantCode + contractNumber`. `ter_no` is
+Served over HTTPS on 3843. Except `POST /pair`, every request needs
+`Authorization: Bearer <device token>` and is rejected unless its ccode/uid/device_id
+(and each CSV record's `CCCODE`) match the paired device; `src/security/secureApp.js`
+then overwrites those fields from the grant. All POST bodies are JSON. `ccode` = `tenantCode + contractNumber`. `ter_no` is
 normalized to 3 digits server-side.
 
 | Method | Route | Purpose |
@@ -287,7 +294,7 @@ POS's stored `ipAddress` keeps working but cannot be wrong.
 |---|---|
 | Bridge app not running | FAIL, stop — nothing else is meaningful |
 | Port held by another process | FAIL, names the process |
-| Non-default `PORT` in `.env` | read from the installed `.env`, not assumed |
+| Secure port 3843 not listening | FAIL; heartbeat proof only comes from a paired POS |
 | Wi-Fi disconnected | FAIL, stop |
 | Static IP on the wrong subnet | repaired (DHCP → re-apply static) |
 | APIPA `169.254.x.x` (DHCP never answered) | repaired |

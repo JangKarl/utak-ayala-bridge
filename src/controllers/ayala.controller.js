@@ -156,7 +156,7 @@ class AyalaController {
       status: "Server is running",
       bridge: "ayala-bridge",
       version: BRIDGE_VERSION,
-      devices: terminalRegistryService.listDevices(),
+      devices: terminalRegistryService.listDevices({ ccode: req.bridgeGrant?.ccode || null }),
     });
   }
 
@@ -481,7 +481,7 @@ class AyalaController {
     res.json({
       status: "alive",
       timestamp: new Date().toISOString(),
-      devices: terminalRegistryService.listDevices(),
+      devices: terminalRegistryService.listDevices({ ccode: req.bridgeGrant?.ccode || null }),
     });
   }
 

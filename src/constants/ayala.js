@@ -216,7 +216,8 @@ const EOD_FIELDS = [
  * Port number for the Express server.
  * @type {number}
  */
-const PORT = process.env.PORT || 3800;
+// Fixed secure transport port shared with the paired POS client.
+const PORT = 3843;
 
 /**
  * Directory where uploaded and generated CSV files are stored.

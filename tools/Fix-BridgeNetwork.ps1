@@ -80,22 +80,8 @@ $proc = Get-Process -Name 'ayala-bridge' -ErrorAction SilentlyContinue |
 # to go hunting for the exe. Falls back to the default install path.
 $BridgeExe = if ($proc) { $proc.Path } else { "$env:ProgramFiles\ayala-bridge\ayala-bridge.exe" }
 
-$Port = 3800
-$portFrom = 'default'
-# main.js reads .env from path.dirname(process.execPath) - beside the exe, not
-# inside resources/ (the app itself is packed into app.asar).
-$envPaths = @()
-if ($proc) { $envPaths += (Join-Path (Split-Path $proc.Path) '.env') }
-$envPaths += "$env:LOCALAPPDATA\Programs\ayala-bridge\.env"
-$envPaths += "$env:ProgramFiles\ayala-bridge\.env"
-foreach ($p in $envPaths) {
-  if (Test-Path $p) {
-    $m = Select-String -Path $p -Pattern '^\s*PORT\s*=\s*(\d+)' -ErrorAction SilentlyContinue
-    if ($m) { $Port = [int]$m.Matches[0].Groups[1].Value; $portFrom = '.env' }
-    break
-  }
-}
-Note 'OK' "Port $Port (from $portFrom)"
+$Port = 3843
+Note 'OK' "Secure bridge port $Port"
 
 $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)
 $listener = $listeners | Select-Object -First 1
@@ -272,11 +258,26 @@ foreach ($r in $broad) {
 
 if (-not (Get-NetFirewallRule -DisplayName "Ayala Bridge $Port" -ErrorAction SilentlyContinue)) {
   New-NetFirewallRule -DisplayName "Ayala Bridge $Port" -Direction Inbound -Action Allow `
-    -Protocol TCP -LocalPort $Port -Profile Any | Out-Null
+    -Protocol TCP -LocalPort $Port -RemoteAddress LocalSubnet -Profile Private,Domain | Out-Null
   Note 'FIXED' "Opened port $Port for incoming connections"
 }
 else {
   Note 'OK' "Port $Port is already open"
+}
+
+# Old POS use HTTP 3800 only while the tray's "Allow old POS" is on: keep the
+# port open (local subnet only) while the bridge listens there, close it after.
+$legacy = @(Get-NetFirewallRule -DisplayName 'Ayala Bridge 3800' -ErrorAction SilentlyContinue)
+if (Get-NetTCPConnection -State Listen -LocalPort 3800 -ErrorAction SilentlyContinue) {
+  if (-not $legacy.Count) {
+    New-NetFirewallRule -DisplayName 'Ayala Bridge 3800' -Direction Inbound -Action Allow `
+      -Protocol TCP -LocalPort 3800 -RemoteAddress LocalSubnet -Profile Private,Domain | Out-Null
+    Note 'FIXED' "Opened HTTP port 3800 for POS not yet paired"
+  }
+}
+elseif ($legacy.Count) {
+  $legacy | Remove-NetFirewallRule
+  Note 'FIXED' "Closed HTTP port 3800 (old POS access is off)"
 }
 
 # A third-party suite keeps its OWN firewall, which the rule above does not touch.
@@ -380,17 +381,14 @@ else {
   Note 'FAIL' "Router is still unreachable. The Wi-Fi itself is down - reboot the router."
 }
 
-try {
-  $r = Invoke-WebRequest -Uri "http://${MyIp}:$Port/heartbeat" -UseBasicParsing -TimeoutSec 8
-  Note 'OK' "Bridge answered /heartbeat with HTTP $($r.StatusCode)"
+# HTTPS requires the POS pairing key and credential. Test TCP reachability here;
+# only the paired POS heartbeat proves certificate trust and inbound connectivity.
+if (Test-NetConnection -ComputerName $MyIp -Port $Port -InformationLevel Quiet) {
+  Note 'OK' "Secure bridge TCP port $Port is reachable locally. Verify heartbeat on the paired POS."
+} else {
+  Note 'FAIL' "Secure bridge TCP port $Port is unreachable."
 }
-catch {
-  Note 'FAIL' "Bridge did not answer /heartbeat on ${MyIp}:$Port - restart the Ayala Bridge app."
-}
-
-# The /heartbeat above is this PC calling its own address, which never crosses an
-# inbound firewall. The terminal registry is the only local record of a TABLET
-# getting through, so it is the one check here that proves inbound really works.
+# Registry timestamps indicate the most recent POS heartbeat.
 $RegFile = 'C:\UTAK\Temp\terminal_registry.json'
 $lastSeen = $null
 if (Test-Path $RegFile) {
@@ -494,8 +492,8 @@ Write-Host "  2. The POS tablet -> Ayala settings -> IP address" -ForegroundColo
 # only place that can be made impossible, and only its owner can set it.
 Write-Host "`nBest done once, by whoever manages the router:" -ForegroundColor White
 Write-Host "  reserve $MyIp for MAC $($nic.MacAddress) in the router's DHCP settings." -ForegroundColor White
-Write-Host "`nOn the tablet's browser this must show a reply:" -ForegroundColor White
-Write-Host "  http://${MyIp}:$Port/heartbeat" -ForegroundColor White
+Write-Host "`nPair the POS using the bridge tray menu, then run Manual Check in POS Bridge Status." -ForegroundColor White
+Write-Host "  HTTPS port $Port requires the paired POS; a browser cannot authenticate." -ForegroundColor White
 Write-Host "`nSend this file to UTAK support: $Log`n" -ForegroundColor White
 
 try { Stop-Transcript | Out-Null } catch {}
