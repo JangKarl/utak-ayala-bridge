@@ -30,6 +30,13 @@ const os = require("os");
 const path = require("path");
 
 const pkg = require("../package.json");
+
+// A beta (e.g. 2.53.0-beta.1) reaches only pilot PCs through the updater. The
+// Back Office link and version must keep pointing at the stable release.
+if (pkg.version.includes("-")) {
+  console.log(`[sync] v${pkg.version} is a pre-release; Back Office config left unchanged.`);
+  process.exit(0);
+}
 const REPO = "JangKarl/utak-ayala-bridge";
 const ARTIFACT = "ayala-bridge-Setup.exe"; // must match build.artifactName
 

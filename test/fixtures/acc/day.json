@@ -1,0 +1,146 @@
+{
+  "shiftKey": "260514",
+  "terminalNumbers": [
+    1,
+    2
+  ],
+  "oldGrandTotals": {
+    "1": 1000,
+    "2": 500
+  },
+  "zCounts": {
+    "previousZCount": 40,
+    "currentZCount": 41
+  },
+  "posCode": "RW-ACC-TEST",
+  "cc": 1,
+  "txns": [
+    {
+      "key": "1778724900",
+      "val": {
+        "terminalNumber": 1,
+        "receiptNo": 101,
+        "total": 224,
+        "payments": {
+          "cash": 224
+        },
+        "items": [
+          {
+            "price": 112,
+            "quantity": 1,
+            "_defaultVatType": "vatable"
+          },
+          {
+            "price": 56,
+            "quantity": 2,
+            "_defaultVatType": "vatable"
+          }
+        ]
+      }
+    },
+    {
+      "key": "1778737200",
+      "val": {
+        "terminalNumber": 1,
+        "receiptNo": 102,
+        "total": 80,
+        "payments": {
+          "gcash": 80
+        },
+        "items": [
+          {
+            "price": 112,
+            "quantity": 1,
+            "_defaultVatType": "vatable",
+            "individualDiscountType": "senior",
+            "discount": 20
+          }
+        ]
+      }
+    },
+    {
+      "key": "1778742300",
+      "val": {
+        "terminalNumber": 1,
+        "receiptNo": 103,
+        "total": 100,
+        "payments": {
+          "visa": 100
+        },
+        "items": [
+          {
+            "price": 50,
+            "quantity": 1,
+            "_defaultVatType": "vatable",
+            "voided": true
+          },
+          {
+            "price": 100,
+            "quantity": 1,
+            "_defaultVatType": "vatable"
+          }
+        ]
+      }
+    },
+    {
+      "key": "1778729400",
+      "val": {
+        "terminalNumber": 2,
+        "receiptNo": 201,
+        "total": 200,
+        "payments": {
+          "cash": 200
+        },
+        "items": [
+          {
+            "price": 200,
+            "quantity": 1,
+            "_defaultVatType": "vatable",
+            "refunded": true
+          },
+          {
+            "price": 200,
+            "quantity": -1,
+            "_defaultVatType": "vatable",
+            "refund": 1778745600
+          }
+        ]
+      }
+    },
+    {
+      "key": "1778754000",
+      "val": {
+        "terminalNumber": 2,
+        "receiptNo": 202,
+        "total": 150,
+        "payments": {
+          "grab": 150
+        },
+        "items": [
+          {
+            "price": 150,
+            "quantity": 1,
+            "_defaultVatType": "vatable",
+            "zeroVAT": true
+          }
+        ]
+      }
+    },
+    {
+      "key": "1778756400",
+      "val": {
+        "terminalNumber": 2,
+        "receiptNo": 203,
+        "total": 300,
+        "paymentType": "Maya",
+        "items": [
+          {
+            "price": 300,
+            "quantity": 1,
+            "_defaultVatType": "vatExempt"
+          }
+        ]
+      }
+    }
+  ]
+}

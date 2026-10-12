@@ -1,4 +1,12 @@
-const { app, Tray, Menu, shell, Notification, dialog } = require("electron");
+const {
+  app,
+  Tray,
+  Menu,
+  shell,
+  Notification,
+  dialog,
+  clipboard,
+} = require("electron");
 const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
@@ -31,6 +39,25 @@ try {
 if (userConfig.uploadsDir) {
   process.env.UPLOADS_DIR = userConfig.uploadsDir;
 }
+// Mall selector: unset means Ayala, so existing installs are unaffected.
+const MALL = userConfig.mall === "acc" ? "acc" : "ayala";
+process.env.BRIDGE_MALL = MALL;
+applyAccEnv();
+
+// The ACC services read these on every call, so a change applies without
+// a restart.
+function applyAccEnv() {
+  const acc = userConfig.acc || {};
+  for (const [env, val] of [
+    ["ACC_UID", acc.uid],
+    ["ACC_KEY", acc.key],
+    ["ACC_FOLDER", acc.folder],
+    ["ACC_DEADLINE_MIN", acc.deadlineMinutes],
+  ]) {
+    if (val) process.env[env] = String(val);
+    else delete process.env[env];
+  }
+}
 
 const {
   startServer,
@@ -40,6 +67,9 @@ const {
   UPLOADS_DIR,
   PORT,
 } = require("./bridge");
+const { accSender } = require("./src/services/accSender.service");
+
+const APP_NAME = "UTAK Mall Bridge";
 
 let tray = null;
 let currentIP = null;
@@ -85,7 +115,7 @@ function selectBridgeIp(address) {
   currentIP = getEffectiveIP();
   buildAndSetTrayMenu(currentIP);
   new Notification({
-    title: "Ayala Bridge — Bridge IP Set",
+    title: `${APP_NAME} — Bridge IP Set`,
     body: `POS devices should connect to http://${currentIP}:${PORT}. Make sure the bridge IP in the POS mall settings matches.`,
   }).show();
 }
@@ -101,6 +131,9 @@ autoUpdater.autoDownload = true;
 // can never fire mid-EOD/reprocess. Leaving this true would let a downloaded
 // update install on ANY app quit — possibly mid-day or mid-reprocess.
 autoUpdater.autoInstallOnAppQuit = false;
+// Pilot PCs opt in from the tray; they get pre-releases (e.g. 2.53.0-beta.1)
+// first, then move to the stable 2.53.0 like everyone else.
+autoUpdater.allowPrerelease = !!userConfig.betaUpdates;
 // The OTA repo (utak-ayala-bridge) is PUBLIC, so electron-updater needs no
 // credentials to read releases. We deliberately do NOT ship a GH_TOKEN with
 // the client — a publish-time token (electron-builder.env) is enough.
@@ -118,7 +151,7 @@ autoUpdater.on("update-downloaded", (info) => {
   );
   if (tray) buildAndSetTrayMenu(currentIP);
   new Notification({
-    title: "Ayala Bridge — Update Ready",
+    title: `${APP_NAME} — Update Ready`,
     body: `v${info.version} downloaded. It will install automatically when idle, or choose "Restart & Update" from the tray menu.`,
   }).show();
   // Poll for a safe window so a continuously-running bridge applies it without
@@ -138,6 +171,7 @@ autoUpdater.on("error", (err) => {
 // re-submitting; restarting now could interrupt the staged rebuild). Fails
 // safe: if the state can't be read, treat it as busy and never install blindly.
 function isReprocessBusy() {
+  if (MALL === "acc") return accSender().running; // never mid-write to the ACC folder
   try {
     return reprocessStateService.listPending().length > 0;
   } catch (err) {
@@ -147,6 +181,7 @@ function isReprocessBusy() {
 }
 
 function onlineDeviceCount() {
+  if (MALL === "acc") return 0; // tablets queue sales while the bridge restarts
   try {
     return terminalRegistryService.listDevices().filter((d) => d.online).length;
   } catch (_) {
@@ -163,7 +198,7 @@ function applyUpdateIfSafe({ manual }) {
   if (!downloadedUpdate) {
     if (manual) {
       new Notification({
-        title: "Ayala Bridge",
+        title: `${APP_NAME}`,
         body: "No update is ready to install yet.",
       }).show();
     }
@@ -174,8 +209,11 @@ function applyUpdateIfSafe({ manual }) {
     log.info("[Updater] Install deferred — EOD reprocess in progress.");
     if (manual) {
       new Notification({
-        title: "Ayala Bridge — Update Deferred",
-        body: "An EOD reprocess is in progress. The update will apply once it finishes.",
+        title: `${APP_NAME} — Update Deferred`,
+        body:
+          MALL === "acc"
+            ? "A file is being sent to ACC. The update will apply once it finishes."
+            : "An EOD reprocess is in progress. The update will apply once it finishes.",
       }).show();
     }
     return false;
@@ -204,6 +242,109 @@ function applyUpdateIfSafe({ manual }) {
 // Builds and applies the tray context menu using the provided IP address.
 function buildAndSetTrayMenu(localIP) {
   if (!tray) return;
+
+  const mallItems = [
+    { label: "Ayala", value: "ayala" },
+    { label: "ACC (Alabang Town Center)", value: "acc" },
+  ].map(({ label, value }) => ({
+    label,
+    type: "radio",
+    checked: MALL === value,
+    click: () => selectMall(value),
+  }));
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: `${APP_NAME} v${app.getVersion()}${userConfig.betaUpdates ? " (beta)" : ""} - Running`,
+      enabled: false,
+    },
+    { label: `Mall: ${MALL === "acc" ? "ACC" : "Ayala"}`, submenu: mallItems },
+    { type: "separator" },
+    ...(MALL === "acc" ? accMenuItems() : ayalaMenuItems(localIP)),
+    {
+      label: "View Logs",
+      click: () =>
+        shell.openPath(path.dirname(log.transports.file.getFile().path)),
+    },
+    {
+      label: "Fix Connection",
+      click: () => {
+        // Shipped via extraResources, not files[] — inside app.asar it could not
+        // be executed. In dev it sits next to main.js.
+        const tool = app.isPackaged
+          ? path.join(process.resourcesPath, "tools", FIX_TOOL)
+          : path.join(__dirname, "tools", FIX_TOOL);
+        if (!fs.existsSync(tool)) {
+          log.error(`[FixConnection] tool missing: ${tool}`);
+          dialog.showErrorBox("Fix Connection", `Tool not found:\n${tool}`);
+          return;
+        }
+        log.info(`[FixConnection] launching ${tool}`);
+        // The .cmd self-elevates, so Windows raises the UAC prompt itself.
+        shell.openPath(tool).then((err) => {
+          if (err) dialog.showErrorBox("Fix Connection", err);
+        });
+      },
+    },
+    ...(MALL === "ayala"
+      ? [
+          {
+            label: "Sync Time",
+            click: () => {
+              restartJobs();
+              new Notification({
+                title: `${APP_NAME}`,
+                body: "Time synced — cron job has been restarted.",
+              }).show();
+            },
+          },
+        ]
+      : []),
+    ...(downloadedUpdate
+      ? [
+          {
+            label: `Restart & Update to v${downloadedUpdate.version}`,
+            click: () => applyUpdateIfSafe({ manual: true }),
+          },
+        ]
+      : []),
+    {
+      label: "Check for Updates",
+      click: () => {
+        autoUpdater.checkForUpdates().catch((err) => {
+          log.error("[Updater] Manual update check failed:", err.message);
+        });
+      },
+    },
+    {
+      label: "Beta updates (pilot stores only)",
+      type: "checkbox",
+      checked: !!userConfig.betaUpdates,
+      click: (item) => {
+        userConfig.betaUpdates = item.checked;
+        saveUserConfig();
+        autoUpdater.allowPrerelease = item.checked;
+        buildAndSetTrayMenu(currentIP);
+        autoUpdater.checkForUpdates().catch((err) => {
+          log.warn("[Updater] Check after beta toggle failed:", err.message);
+        });
+      },
+    },
+    { type: "separator" },
+    {
+      label: "Quit Bridge",
+      click: () => {
+        app.isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+
+  tray.setToolTip(`${APP_NAME} (${MALL === "acc" ? "ACC" : "Ayala"})`);
+  tray.setContextMenu(contextMenu);
+}
+
+function ayalaMenuItems(localIP) {
   const devices = terminalRegistryService.listDevices();
   const onlineCount = devices.filter((device) => device.online).length;
   const deviceItems = devices.length
@@ -213,32 +354,10 @@ function buildAndSetTrayMenu(localIP) {
       }))
     : [{ label: "No POS devices seen yet", enabled: false }];
 
-  // POS-facing IP picker. Radio list of every detected IPv4 so the operator
-  // can pin the store-network address (e.g. 192.168.0.171) on a dual-homed PC.
-  const ipItems = [
-    {
-      label: "Auto-detect",
-      type: "radio",
-      checked: !userConfig.bridgeIp,
-      click: () => selectBridgeIp(null),
-    },
-    ...listLocalIPv4Addresses().map((a) => ({
-      label: `${a.address}  (${a.name})`,
-      type: "radio",
-      checked: userConfig.bridgeIp === a.address,
-      click: () => selectBridgeIp(a.address),
-    })),
-  ];
-
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: `Ayala Bridge v${app.getVersion()} - Running`,
-      enabled: false,
-    },
-    { type: "separator" },
+  return [
     {
       label: `Bridge IP: ${localIP}`,
-      submenu: ipItems,
+      submenu: bridgeIpItems(),
     },
     { label: `Port: ${PORT}`, enabled: false },
     {
@@ -276,7 +395,7 @@ function buildAndSetTrayMenu(localIP) {
             "utf8",
           );
           new Notification({
-            title: "Ayala Bridge",
+            title: `${APP_NAME}`,
             body: "Uploads directory updated. Restarting to apply changes...",
           }).show();
           setTimeout(() => {
@@ -289,12 +408,6 @@ function buildAndSetTrayMenu(localIP) {
       },
     },
     {
-      label: "View Logs",
-      click: () =>
-        shell.openPath(path.dirname(log.transports.file.getFile().path)),
-    },
-    { type: "separator" },
-    {
       label: "Refresh IP",
       click: () => {
         const newIP = getEffectiveIP();
@@ -303,75 +416,133 @@ function buildAndSetTrayMenu(localIP) {
           currentIP = newIP;
           buildAndSetTrayMenu(newIP);
           new Notification({
-            title: "Ayala Bridge — IP Updated",
+            title: `${APP_NAME} — IP Updated`,
             body: `New IP: http://${newIP}:${PORT}\nUpdate your POS configuration.`,
           }).show();
         } else {
           new Notification({
-            title: "Ayala Bridge",
+            title: `${APP_NAME}`,
             body: `IP unchanged: http://${newIP}:${PORT}`,
           }).show();
         }
       },
     },
+    { type: "separator" },
+  ];
+}
+
+// POS-facing IP picker. Radio list of every detected IPv4 so the operator
+// can pin the store-network address (e.g. 192.168.0.171) on a dual-homed PC.
+function bridgeIpItems() {
+  return [
     {
-      label: "Fix Connection",
-      click: () => {
-        // Shipped via extraResources, not files[] — inside app.asar it could not
-        // be executed. In dev it sits next to main.js.
-        const tool = app.isPackaged
-          ? path.join(process.resourcesPath, "tools", FIX_TOOL)
-          : path.join(__dirname, "tools", FIX_TOOL);
-        if (!fs.existsSync(tool)) {
-          log.error(`[FixConnection] tool missing: ${tool}`);
-          dialog.showErrorBox("Fix Connection", `Tool not found:\n${tool}`);
-          return;
-        }
-        log.info(`[FixConnection] launching ${tool}`);
-        // The .cmd self-elevates, so Windows raises the UAC prompt itself.
-        shell.openPath(tool).then((err) => {
-          if (err) dialog.showErrorBox("Fix Connection", err);
-        });
-      },
+      label: "Auto-detect",
+      type: "radio",
+      checked: !userConfig.bridgeIp,
+      click: () => selectBridgeIp(null),
     },
+    ...listLocalIPv4Addresses().map((a) => ({
+      label: `${a.address}  (${a.name})`,
+      type: "radio",
+      checked: userConfig.bridgeIp === a.address,
+      click: () => selectBridgeIp(a.address),
+    })),
+  ];
+}
+
+function accMenuItems() {
+  const acc = userConfig.acc || {};
+  const st = accSender().status();
+  const sent = st.lastSent;
+  const when = (ms) => (ms ? new Date(ms).toLocaleString() : "never");
+  return [
     {
-      label: "Sync Time",
-      click: () => {
-        restartJobs();
-        new Notification({
-          title: "Ayala Bridge",
-          body: "Time synced — cron job has been restarted.",
-        }).show();
-      },
+      label: `Bridge IP: ${currentIP}`,
+      submenu: bridgeIpItems(),
     },
-    ...(downloadedUpdate
-      ? [
-          {
-            label: `Restart & Update to v${downloadedUpdate.version}`,
-            click: () => applyUpdateIfSafe({ manual: true }),
-          },
-        ]
-      : []),
-    {
-      label: "Check for Updates",
-      click: () => {
-        autoUpdater.checkForUpdates().catch((err) => {
-          log.error("[Updater] Manual update check failed:", err.message);
-        });
-      },
-    },
+    { label: `Port: ${PORT}`, enabled: false },
     { type: "separator" },
     {
-      label: "Quit Bridge",
-      click: () => {
-        app.isQuitting = true;
-        app.quit();
-      },
+      label: acc.uid ? `ACC store: ${acc.uid.slice(0, 8)}…` : "ACC store: NOT SET UP",
+      enabled: false,
     },
-  ]);
+    {
+      label: sent
+        ? `Last file sent: ${sent.filename} (${sent.via}${sent.verified === false ? ", awaiting check" : ""})`
+        : "Last file sent: none yet",
+      enabled: false,
+    },
+    {
+      label: `Internet: ${st.online === null ? "checking…" : st.online ? "online" : "OFFLINE"} · last check ${when(st.lastRunAt)}`,
+      enabled: false,
+    },
+    ...(st.lastError
+      ? [{ label: `Last error: ${st.lastError.day} ${st.lastError.message}`.slice(0, 110), enabled: false }]
+      : []),
+    { type: "separator" },
+    { label: "Send Now", click: () => accSender().sync().finally(() => buildAndSetTrayMenu(currentIP)) },
+    { label: "Open ACC Folder", click: () => shell.openPath(accSender().folder()) },
+    { label: `ACC folder: ${accSender().folder()}`, enabled: false },
+    { label: "Select ACC Folder", click: selectAccFolder },
+    { label: "Paste ACC Setup Code", click: pasteAccSetupCode },
+    { type: "separator" },
+  ];
+}
 
-  tray.setToolTip("Ayala Bridge");
-  tray.setContextMenu(contextMenu);
+// Switching malls loads a different server and jobs, so restart.
+function selectMall(mall) {
+  if (mall === MALL) return;
+  userConfig.mall = mall;
+  saveUserConfig();
+  log.info(`[Mall] switched to ${mall}; restarting`);
+  app.relaunch();
+  app.exit(0);
+}
+
+async function selectAccFolder() {
+  try {
+    const result = await dialog.showOpenDialog({
+      title: "Select the ACC folder (local or \\\\server\\share)",
+      defaultPath: accSender().folder(),
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (result.canceled || !result.filePaths.length) return;
+    userConfig.acc = { ...userConfig.acc, folder: result.filePaths[0] };
+    saveUserConfig();
+    applyAccEnv();
+    buildAndSetTrayMenu(currentIP);
+  } catch (err) {
+    log.error("[ACC] folder select failed:", err);
+  }
+}
+
+/**
+ * The Admin's "Generate bridge key" copies a code: base64 of {"u": uid, "k": key}.
+ * Pasting it here saves both, so nobody types a uid or a key by hand.
+ */
+function pasteAccSetupCode() {
+  try {
+    const { u, k } = JSON.parse(
+      Buffer.from(clipboard.readText().trim(), "base64").toString("utf8"),
+    );
+    if (typeof u !== "string" || typeof k !== "string" || k.length < 32) {
+      throw new Error("missing store or key");
+    }
+    userConfig.acc = { ...userConfig.acc, uid: u, key: k };
+    saveUserConfig();
+    applyAccEnv();
+    log.info(`[ACC] setup code saved for ${u}`);
+    new Notification({ title: APP_NAME, body: "ACC store set up. Checking for files to send…" }).show();
+    accSender()
+      .sync()
+      .finally(() => buildAndSetTrayMenu(currentIP));
+  } catch (err) {
+    log.warn(`[ACC] invalid setup code: ${err.message}`);
+    dialog.showErrorBox(
+      APP_NAME,
+      "The clipboard does not hold a valid ACC setup code. Copy it again from the Admin (Mall Config → ACC → Generate bridge key), then try again.",
+    );
+  }
 }
 
 // Prevent multiple instances
@@ -382,7 +553,7 @@ if (!gotTheLock) {
   app.on("second-instance", () => {
     if (tray) {
       new Notification({
-        title: "Ayala Bridge",
+        title: `${APP_NAME}`,
         body: "Bridge is already running in the taskbar.",
       }).show();
     }
@@ -437,7 +608,7 @@ if (!gotTheLock) {
             currentIP = newIP;
             buildAndSetTrayMenu(newIP);
             new Notification({
-              title: "Ayala Bridge — IP Changed",
+              title: `${APP_NAME} — IP Changed`,
               body: `New IP: http://${newIP}:${PORT}\nUpdate your POS configuration.`,
             }).show();
           } else {
@@ -457,12 +628,12 @@ if (!gotTheLock) {
     const previousVersion = userConfig.lastVersion;
     if (previousVersion && previousVersion !== runningVersion) {
       new Notification({
-        title: "Ayala Bridge — Updated",
+        title: `${APP_NAME} — Updated`,
         body: `Updated to v${runningVersion} (was v${previousVersion}). Running on http://${currentIP}:${PORT}`,
       }).show();
     } else {
       new Notification({
-        title: "Ayala Bridge Started",
+        title: `${APP_NAME} Started`,
         body: `Bridge is running on http://${currentIP}:${PORT}`,
       }).show();
     }

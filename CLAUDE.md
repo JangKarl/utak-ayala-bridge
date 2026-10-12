@@ -53,8 +53,64 @@ use a broad classic `repo` token, and never put the token in `.env` (which is a
 runtime config file). Installed clients download in the background and install
 when the bridge is idle (see the updater guards in `main.js`).
 
+**Beta releases:** set a pre-release version (e.g. `2.53.0-beta.1`) and run
+`npm run publish:beta`. Only PCs with tray → **Beta updates** on
+(`betaUpdates` in `config.json` → `autoUpdater.allowPrerelease`) install it.
+`sync-release-config.js` skips pre-releases, so the Back Office keeps pointing
+at the stable build. Promote by publishing the same code as `2.53.0` with
+`npm run publish`; beta PCs move to it because `2.53.0` > `2.53.0-beta.x`.
+
 **Build gotcha:** `assets/icon.ico` must contain a 256×256 layer or the NSIS
 build fails.
+
+## Mall Selector (Ayala / ACC)
+
+One app serves both malls. Tray → **Mall** sets `mall` in `config.json`;
+`main.js` passes it as `BRIDGE_MALL` and **restarts** on change. **Unset means
+Ayala**: every PC installed before the selector keeps working unchanged.
+`bridge.js` loads only the selected mall's routes and jobs (Ayala's services
+hydrate state and create `C:\AYALA` folders at require time).
+
+The visible name is **UTAK Mall Bridge**. `appId`, package name, install folder
+and `%APPDATA%\ayala-bridge` stay as they were: renaming them breaks OTA updates.
+
+## ACC Mode (Alabang Town Center)
+
+ACC wants one CSV per business day, `MMDDYYCC.csv`, in a shared folder that
+ACC's Pollsys collects. Two paths keep it on time and correct:
+
+| Path | How | When |
+|---|---|---|
+| Cloud (primary) | `fun` functions `mall-acc-pending` / `-download` / `-ack` | Internet up, and the cloud holds at least as many sales as the laptop |
+| Local (offline) | Tablets POST each sale + shift close; the bridge builds the file | Nothing sent `ACC_DEADLINE_MIN` (default 60) after the last close |
+
+Once online, every local file is compared with the cloud's, only for days the
+cloud has seen close and only when it holds ≥ the laptop's sale count. Same →
+marked verified. Different → the cloud file is sent as the next attempt
+(`CC` + 1). The cloud stays the source of truth for grand totals.
+
+- **Generator:** `src/acc-core/` is a **generated copy** of
+  `fun/functions/mall/acc/_core` + `shared/models/Transaction*.js`. Never edit
+  it here: change `fun`, run `node scripts/sync-acc-core.js [path-to-fun]`, and
+  commit the copy with the refreshed `test/fixtures/acc/`.
+  `test/accCore.test.js` is the same golden file the cloud tests, so drift
+  fails the build.
+- **Services:** `accStore.service.js` (sales as JSON lines per day + state in
+  `C:\UTAK\Temp\acc`; 45-day retention; unchecked offline days are never
+  pruned), `accCloud.service.js` (HTTP, `x-bridge-key`), `accSender.service.js`
+  (the rules above; one failing day never blocks the others). The job runs
+  every 5 minutes (`src/jobs/acc.job.js`) and right after any `/acc/close`.
+- **Setup:** tray → **Paste ACC Setup Code** (base64 `{"u": uid, "k": key}`,
+  copied from the Admin) and **Select ACC Folder** (local or `\\server\share`,
+  default `C:\ACC`). Env: `ACC_UID`, `ACC_KEY`, `ACC_FOLDER`,
+  `ACC_DEADLINE_MIN`, `ACC_CLOUD_URL` (default prod), `ACC_STATE_DIR`.
+- **Updates** never install while a sync is running (`accSender().running`).
+
+| Method | Route (ACC mode only) | Purpose |
+|---|---|---|
+| GET | `/status`, `/acc/status` | Health + last file sent, online state, last error |
+| POST | `/acc/transaction` | `{ txns: [{ key, val }] }`: raw RTDB transactions; a re-send replaces |
+| POST | `/acc/close` | `{ shiftKey, terminal, count, lastReceiptNo? }`: starts the deadline |
 
 ## Architecture
 

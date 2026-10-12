@@ -45,6 +45,7 @@
     "dev": "node -e \"require('./bridge').startServer()\"",
     "build": "electron-builder --win",
     "publish": "electron-builder --win --publish always && node scripts/sync-release-config.js",
+    "publish:beta": "electron-builder --win --publish always -c.publish.releaseType=prerelease",
     "test": "node --test test/"
   },
   "keywords": [

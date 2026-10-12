@@ -11,22 +11,43 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const { PORT, UPLOADS_DIR } = require("./src/constants/ayala");
 const { getLocalIPAddress, listLocalIPv4Addresses } = require("./src/utils");
-const ayalaRoutes = require("./src/routes/ayala.routes");
-const { initJobs, restartJobs } = require("./src/jobs/ayala.job");
 const { startTimeWatcher } = require("./src/jobs/timeWatcher");
 
-// Ensure uploads directory exists in user's home (production friendly)
-if (!fs.existsSync(UPLOADS_DIR)) {
+// Which mall this PC serves; main.js sets it from config.json. Unset means
+// Ayala, so every PC installed before the selector existed keeps working.
+const MALL = process.env.BRIDGE_MALL === "acc" ? "acc" : "ayala";
+
+// Only the selected mall's modules load: Ayala's services hydrate state and
+// create C:\AYALA folders at require time, which an ACC PC has no use for.
+let mall;
+if (MALL === "acc") {
+  const job = require("./src/jobs/acc.job");
+  mall = {
+    routes: require("./src/routes/acc.routes"),
+    initJobs: job.initAccJobs,
+    restartJobs: job.restartAccJobs,
+  };
+} else {
+  const job = require("./src/jobs/ayala.job");
+  mall = {
+    routes: require("./src/routes/ayala.routes"),
+    initJobs: job.initJobs,
+    restartJobs: job.restartJobs,
+  };
+}
+
+if (MALL === "ayala" && !fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
 // Express App Setup
 const app = express();
 app.use(cors());
-app.use(express.json());
+// A tablet back online drains its queued sales in one batch.
+app.use(express.json(MALL === "acc" ? { limit: "5mb" } : undefined));
 
 // Routes
-app.use("/", ayalaRoutes);
+app.use("/", mall.routes);
 
 /**
  * Starts the Express server and initializes background jobs.
@@ -34,18 +55,18 @@ app.use("/", ayalaRoutes);
 const startServer = () => {
   app.listen(PORT, () => {
     log.info(
-      `Ayala Bridge server running on http://${getLocalIPAddress()}:${PORT}`,
+      `Bridge (${MALL}) server running on http://${getLocalIPAddress()}:${PORT}`,
     );
 
     // Initialize scheduled jobs
-    initJobs();
+    mall.initJobs();
 
     // Watch for system clock changes (e.g., manual changes during demos)
     startTimeWatcher(() => {
       log.info(
         "[TimeWatcher] System clock change detected — restarting cron job.",
       );
-      restartJobs();
+      mall.restartJobs();
     });
   });
 };
@@ -56,9 +77,10 @@ if (require.main === module) {
 
 module.exports = {
   startServer,
-  restartJobs,
+  restartJobs: () => mall.restartJobs(),
   getLocalIPAddress,
   listLocalIPv4Addresses,
   UPLOADS_DIR,
   PORT,
+  MALL,
 };
