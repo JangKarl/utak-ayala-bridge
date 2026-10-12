@@ -279,7 +279,7 @@ genuinely broken address triggers the repair. It writes a full transcript to
 The repair's whole point is that **nobody types a gateway** — the usual field
 fault is a hand-typed static IP whose gateway does not exist on that network, so
 IPv4 shows "No network access", the tray still says Running, and the POS
-heartbeat aborts at ~10 s. The script flips Wi-Fi to DHCP, reads what the router
+heartbeat aborts at ~10 s. The script flips the adapter to DHCP, reads what the router
 really serves, then re-applies that same subnet/gateway/DNS statically so the
 POS's stored `ipAddress` keeps working but cannot be wrong.
 
@@ -288,7 +288,9 @@ POS's stored `ipAddress` keeps working but cannot be wrong.
 | Bridge app not running | FAIL, stop — nothing else is meaningful |
 | Port held by another process | FAIL, names the process |
 | Non-default `PORT` in `.env` | read from the installed `.env`, not assumed |
-| Wi-Fi disconnected | FAIL, stop |
+| Which adapter the POS uses | Wi-Fi **or** LAN cable, by evidence: the `-PosIp` subnet, then the tray's pinned Bridge IP (`%APPDATA%\ayala-bridge\config.json`), then Wi-Fi, then a lone cable |
+| Two cables, nothing says which (store LAN + mall link) | FAIL, stop — never guess: the repair would re-address the mall link |
+| No network connected | FAIL, stop |
 | Static IP on the wrong subnet | repaired (DHCP → re-apply static) |
 | APIPA `169.254.x.x` (DHCP never answered) | repaired |
 | Duplicate IP on the LAN | repaired |
@@ -301,14 +303,14 @@ POS's stored `ipAddress` keeps working but cannot be wrong.
 | Network profile Public | set to Private |
 | Third-party AV/firewall (McAfee etc.) | WARN — can't be fixed from here |
 | PC sleeping / hibernating on AC | disabled |
-| Wi-Fi power saving (idle drops) | powercfg → Maximum Performance, and `PnPCapabilities=24` |
-| MAC randomization breaking a DHCP reservation | disabled for the SSID |
+| Adapter power saving (idle drops) | `PnPCapabilities=24` on the chosen adapter; Wi-Fi also gets powercfg → Maximum Performance |
+| MAC randomization breaking a DHCP reservation | disabled for the SSID (Wi-Fi only) |
 | Tablet on a different network | FAIL, only detectable with `-PosIp` |
 | Router AP/Client Isolation or Guest mode | FAIL — inferred from "ARP resolves but no ping reply" |
 
 Ends by printing the IP and port. Support then sets that in the tray (Bridge
-IP), the POS's Ayala settings, and RTDB `/{uid}/mode/ipAddress` — all three must
-agree.
+IP), the POS's Ayala settings, and RTDB `/{uid}/mode/ipAddress` +
+`/{uid}/mall/ayala/mode/ipAddress` — all must agree.
 
 Reachable from the tray as **Fix Connection**, so a merchant never has to find
 the file. It ships via `extraResources` (`resources/tools/`), **not** `files[]`

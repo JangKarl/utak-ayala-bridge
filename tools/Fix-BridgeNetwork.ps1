@@ -47,7 +47,7 @@ function MaskOf($prefix) {
 function PinStatic($idx, $ip, $prefix, $gw) {
   $name = (Get-NetAdapter -InterfaceIndex $idx -ErrorAction SilentlyContinue).Name
   if (-not $name) {
-    Note 'WARN' "Could not read the Wi-Fi adapter name - address left as it is."
+    Note 'WARN' "Could not read the network adapter name - address left as it is."
     return $false
   }
   # No 2>&1: redirecting a native command's stderr turns it into error records,
@@ -126,19 +126,56 @@ else {
   Note 'OK' "Port $Port is bound to $($openBind.LocalAddress) - open to the network"
 }
 
-# ============================ 2. Wi-Fi adapter ===============================
+# ============================ 2. Network adapter =============================
 Head "Network"
 
-$nic = Get-NetAdapter -Physical | Where-Object {
-  $_.Status -eq 'Up' -and $_.InterfaceDescription -match 'Wi-?Fi|Wireless|802\.11'
-} | Select-Object -First 1
+$WifiPattern = 'Wi-?Fi|Wireless|802\.11'
+$up = @(Get-NetAdapter -Physical | Where-Object Status -eq 'Up')
+$wifi = @($up | Where-Object { $_.InterfaceDescription -match $WifiPattern })
+$wired = @($up | Where-Object { $_.InterfaceDescription -notmatch $WifiPattern })
+
+function NicHolding($test) {
+  foreach ($a in $up) {
+    foreach ($x in @(Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue)) {
+      if (& $test $x) { return $a }
+    }
+  }
+}
+
+# The POS may reach this PC over Wi-Fi OR a LAN cable, and the mall's own link is
+# often a second cable. The repair below rewrites the chosen adapter's address, so
+# pick by evidence - the tablet's network, then the tray's Bridge IP - and never
+# guess between two cables: re-addressing the mall link would cut the mall off.
+$nic = $null
+$how = $null
+if ($PosIp) {
+  $nic = NicHolding { param($x) try { (NetworkOf $PosIp $x.PrefixLength) -eq (NetworkOf $x.IPAddress $x.PrefixLength) } catch { $false } }
+  $how = "same network as tablet $PosIp"
+}
 if (-not $nic) {
-  Note 'FAIL' "No Wi-Fi adapter is connected. Connect this PC to the store Wi-Fi first."
+  # main.js keeps the tray's pick in Electron userData: %APPDATA%\ayala-bridge.
+  $pinned = $null
+  try { $pinned = (Get-Content "$env:APPDATA\ayala-bridge\config.json" -Raw -ErrorAction Stop | ConvertFrom-Json).bridgeIp } catch {}
+  if ($pinned) { $nic = NicHolding { param($x) $x.IPAddress -eq $pinned }; $how = "holds the tray's Bridge IP" }
+}
+if (-not $nic -and $wifi) { $nic = $wifi[0]; $how = 'Wi-Fi' }
+if (-not $nic -and $wired.Count -eq 1) { $nic = $wired[0]; $how = 'the only network cable' }
+if (-not $nic) {
+  if ($wired.Count -gt 1) {
+    Note 'FAIL' "More than one network cable is connected ($($wired.Name -join ', ')) and nothing says which one the POS uses."
+    Write-Host "`n  ACTION: tray icon -> Bridge IP -> pick the store network's address, then run this again." -ForegroundColor Red
+    Write-Host "          Or run 'Fix Bridge Connection.cmd <tablet IP>' so the tablet's network decides." -ForegroundColor Red
+  }
+  else {
+    Note 'FAIL' "This PC is not connected to any network. Connect it to the store Wi-Fi or plug in the LAN cable first."
+  }
   try { Stop-Transcript | Out-Null } catch {}
   Read-Host "Press Enter to close" | Out-Null; exit 1
 }
 $idx = $nic.ifIndex
-Note 'OK' "Adapter $($nic.Name)  MAC $($nic.MacAddress)"
+$IsWifi = $nic.InterfaceDescription -match $WifiPattern
+$Link = if ($IsWifi) { 'Wi-Fi' } else { 'LAN cable' }
+Note 'OK' "Adapter $($nic.Name) ($how)  MAC $($nic.MacAddress)"
 
 $cfg = Get-NetIPConfiguration -InterfaceIndex $idx
 $ip4 = $cfg.IPv4Address | Select-Object -First 1
@@ -189,7 +226,7 @@ else {
   }
   if (-not $cfg) {
     Note 'FAIL' "The router handed out no IPv4 address. This is a router/internet fault, not a PC fault."
-    Write-Host "`n  ACTION: reboot the Wi-Fi router, or call the internet provider." -ForegroundColor Red
+    Write-Host "`n  ACTION: reboot the store router, or call the internet provider." -ForegroundColor Red
     try { Stop-Transcript | Out-Null } catch {}
     Read-Host "Press Enter to close" | Out-Null; exit 1
   }
@@ -223,7 +260,7 @@ $MyIp = $ip4.IPAddress
 foreach ($r in (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
     Where-Object { $_.InterfaceIndex -ne $idx })) {
   $n = (Get-NetAdapter -InterfaceIndex $r.InterfaceIndex -ErrorAction SilentlyContinue).Name
-  Note 'WARN' "'$n' also has a default gateway ($($r.NextHop)). Two gateways make Windows drop the Wi-Fi."
+  Note 'WARN' "'$n' also has a default gateway ($($r.NextHop)). Two gateways make Windows drop the $Link."
   Write-Host "         ACTION: clear ONLY the 'Default gateway' box on '$n' - keep its IP and mask." -ForegroundColor Yellow
 }
 
@@ -233,7 +270,7 @@ foreach ($a in (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContin
     Where-Object { $_.InterfaceIndex -ne $idx -and $_.IPAddress -notlike '127.*' })) {
   if ((NetworkOf $a.IPAddress $a.PrefixLength) -eq $myNet) {
     $n = (Get-NetAdapter -InterfaceIndex $a.InterfaceIndex -ErrorAction SilentlyContinue).Name
-    Note 'WARN' "'$n' ($($a.IPAddress)) is on the SAME network as Wi-Fi. Unplug it or change its subnet."
+    Note 'WARN' "'$n' ($($a.IPAddress)) is on the SAME network as the $Link. Unplug it or change its subnet."
   }
 }
 
@@ -241,7 +278,10 @@ foreach ($a in (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContin
 Head "Firewall"
 
 Set-NetConnectionProfile -InterfaceIndex $idx -NetworkCategory Private -ErrorAction SilentlyContinue
-$prof = (Get-NetConnectionProfile -InterfaceIndex $idx -ErrorAction SilentlyContinue).NetworkCategory
+$conn = Get-NetConnectionProfile -InterfaceIndex $idx -ErrorAction SilentlyContinue
+$prof = $conn.NetworkCategory
+# Windows' name for this network: the SSID on Wi-Fi, "Network 2" and the like on a cable.
+$NetName = $conn.Name
 Note 'OK' "Network profile: $prof"
 
 # Clicking Cancel on the first Windows popup leaves a BLOCK rule behind, and a
@@ -319,14 +359,14 @@ foreach ($n in $ThirdPartyOff) {
 # ============================ 4. Staying awake ===============================
 Head "Power"
 
-# A laptop that sleeps, or a Wi-Fi card that powers down when idle, is the usual
+# A laptop that sleeps, or a network card that powers down when idle, is the usual
 # cause of a bridge that works and then goes Offline by itself.
 powercfg /change standby-timeout-ac 0 | Out-Null
 powercfg /change hibernate-timeout-ac 0 | Out-Null
 powercfg /setacvalueindex SCHEME_CURRENT 19cbb8fa-5279-450e-9fac-8a3d5fedd0c1 `
   12bbebe6-58d6-4636-95bb-3217ef867c1a 0 | Out-Null
 powercfg /setactive SCHEME_CURRENT | Out-Null
-Note 'FIXED' "Sleep disabled while plugged in; Wi-Fi set to maximum performance"
+Note 'FIXED' $(if ($IsWifi) { "Sleep disabled while plugged in; Wi-Fi set to maximum performance" } else { "Sleep disabled while plugged in" })
 
 # Device Manager's "Allow the computer to turn off this device" has no cmdlet on
 # every build, so set the adapter's PnPCapabilities directly (0x18 = never power down).
@@ -336,14 +376,19 @@ $key = Get-ChildItem $netClass -ErrorAction SilentlyContinue | Where-Object {
 } | Select-Object -First 1
 if ($key) {
   Set-ItemProperty -Path $key.PSPath -Name PnPCapabilities -Value 24 -Type DWord -ErrorAction SilentlyContinue
-  Note 'FIXED' "Wi-Fi card set to never power down to save power (applies after the next restart)"
+  Note 'FIXED' "Network card set to never power down to save power (applies after the next restart)"
 }
 else {
-  Note 'WARN' "Could not reach the Wi-Fi card's power setting - untick 'Allow the computer to turn off this device' in Device Manager if the bridge keeps dropping."
+  Note 'WARN' "Could not reach the network card's power setting - untick 'Allow the computer to turn off this device' in Device Manager if the bridge keeps dropping."
 }
 
-$ssid = (netsh wlan show interfaces | Select-String '^\s+SSID\s+:\s+(.+)$').Matches |
-  ForEach-Object { $_.Groups[1].Value.Trim() } | Select-Object -First 1
+# MAC randomization is Wi-Fi only; a cable always shows the card's real MAC.
+# No SSID line (e.g. other-language netsh output) must not throw under 'Stop'.
+$ssid = $null
+if ($IsWifi) {
+  $m = netsh wlan show interfaces | Select-String '^\s+SSID\s+:\s+(.+)$' | Select-Object -First 1
+  if ($m) { $ssid = $m.Matches[0].Groups[1].Value.Trim() }
+}
 if ($ssid) {
   netsh wlan set profileparameter name="$ssid" randomization=disabled | Out-Null
   Note 'OK' "Wi-Fi '$ssid' will always use the real MAC (needed for a router IP reservation)"
@@ -377,7 +422,7 @@ if ($gwNow -and (Test-Connection $($gwNow[0].NextHop) -Count 2 -Quiet -ErrorActi
   Note 'OK' "Router is reachable"
 }
 else {
-  Note 'FAIL' "Router is still unreachable. The Wi-Fi itself is down - reboot the router."
+  Note 'FAIL' "Router is still unreachable. The $Link itself is down - reboot the router."
 }
 
 try {
@@ -423,7 +468,7 @@ if ($PosIp) {
   try { $sameNet = (NetworkOf $PosIp $ip4.PrefixLength) -eq (NetworkOf $MyIp $ip4.PrefixLength) } catch {}
   if (-not $sameNet) {
     Note 'FAIL' "The tablet ($PosIp) is on a DIFFERENT network than this PC ($MyIp)."
-    Write-Host "         ACTION: put the tablet on the same Wi-Fi as this PC - not guest Wi-Fi, not mobile data." -ForegroundColor Red
+    Write-Host "         ACTION: put the tablet on the store Wi-Fi from the same router as this PC - not guest Wi-Fi, not mobile data." -ForegroundColor Red
   }
   elseif (Test-Connection $PosIp -Count 2 -Quiet -ErrorAction SilentlyContinue) {
     Note 'OK' "Tablet $PosIp is reachable from this PC"
@@ -433,7 +478,7 @@ if ($PosIp) {
     Write-Host "         ACTION: in the router settings turn OFF AP Isolation / Client Isolation / Guest network." -ForegroundColor Red
   }
   else {
-    Note 'WARN' "No reply from $PosIp. Check the tablet is awake and joined to this Wi-Fi."
+    Note 'WARN' "No reply from $PosIp. Check the tablet is awake and joined to the store Wi-Fi."
   }
 }
 
@@ -468,11 +513,11 @@ if ($ThirdParty) {
   Write-Host "  Turn it back ON, then do the 3 steps below." -ForegroundColor Yellow
   Write-Host ""
   Write-Host "  1. $sec -> Firewall -> Network Connections" -ForegroundColor Yellow
-  if ($ssid) {
-    Write-Host "     Set '$ssid' to TRUSTED / HOME (not Public)." -ForegroundColor Yellow
+  if ($NetName) {
+    Write-Host "     Set '$NetName' to TRUSTED / HOME (not Public)." -ForegroundColor Yellow
   }
   else {
-    Write-Host "     Set this Wi-Fi to TRUSTED / HOME (not Public)." -ForegroundColor Yellow
+    Write-Host "     Set this $Link network to TRUSTED / HOME (not Public)." -ForegroundColor Yellow
   }
   Write-Host "  2. $sec -> Firewall -> Internet Connections for Programs -> Add" -ForegroundColor Yellow
   Write-Host "     Pick this file: $BridgeExe" -ForegroundColor Yellow
