@@ -67,9 +67,13 @@ const {
   UPLOADS_DIR,
   PORT,
 } = require("./bridge");
-const { accSender } = require("./src/services/accSender.service");
+const { accSender, describeSync } = require("./src/services/accSender.service");
 
 const APP_NAME = "UTAK Mall Bridge";
+// Windows names and badges notifications by this ID. It must equal build.appId
+// so the installed Start-menu shortcut supplies the name and icon.
+app.setAppUserModelId("com.ayala.bridge");
+const NOTIFY_ICON = path.join(__dirname, "assets", "icon.ico");
 
 let tray = null;
 let currentIP = null;
@@ -114,7 +118,7 @@ function selectBridgeIp(address) {
   saveUserConfig();
   currentIP = getEffectiveIP();
   buildAndSetTrayMenu(currentIP);
-  new Notification({
+  new Notification({ icon: NOTIFY_ICON,
     title: `${APP_NAME} — Bridge IP Set`,
     body: `POS devices should connect to http://${currentIP}:${PORT}. Make sure the bridge IP in the POS mall settings matches.`,
   }).show();
@@ -150,7 +154,7 @@ autoUpdater.on("update-downloaded", (info) => {
     `[Updater] v${info.version} downloaded — will apply when the bridge is idle (no reprocess, no terminal online) or via the tray "Restart & Update".`,
   );
   if (tray) buildAndSetTrayMenu(currentIP);
-  new Notification({
+  new Notification({ icon: NOTIFY_ICON,
     title: `${APP_NAME} — Update Ready`,
     body: `v${info.version} downloaded. It will install automatically when idle, or choose "Restart & Update" from the tray menu.`,
   }).show();
@@ -197,7 +201,7 @@ function onlineDeviceCount() {
 function applyUpdateIfSafe({ manual }) {
   if (!downloadedUpdate) {
     if (manual) {
-      new Notification({
+      new Notification({ icon: NOTIFY_ICON,
         title: `${APP_NAME}`,
         body: "No update is ready to install yet.",
       }).show();
@@ -208,7 +212,7 @@ function applyUpdateIfSafe({ manual }) {
   if (isReprocessBusy()) {
     log.info("[Updater] Install deferred — EOD reprocess in progress.");
     if (manual) {
-      new Notification({
+      new Notification({ icon: NOTIFY_ICON,
         title: `${APP_NAME} — Update Deferred`,
         body:
           MALL === "acc"
@@ -292,7 +296,7 @@ function buildAndSetTrayMenu(localIP) {
             label: "Sync Time",
             click: () => {
               restartJobs();
-              new Notification({
+              new Notification({ icon: NOTIFY_ICON,
                 title: `${APP_NAME}`,
                 body: "Time synced — cron job has been restarted.",
               }).show();
@@ -394,7 +398,7 @@ function ayalaMenuItems(localIP) {
             JSON.stringify({ ...userConfig, uploadsDir: selectedDir }, null, 2),
             "utf8",
           );
-          new Notification({
+          new Notification({ icon: NOTIFY_ICON,
             title: `${APP_NAME}`,
             body: "Uploads directory updated. Restarting to apply changes...",
           }).show();
@@ -415,12 +419,12 @@ function ayalaMenuItems(localIP) {
           log.info(`IP changed (manual refresh): ${currentIP} → ${newIP}`);
           currentIP = newIP;
           buildAndSetTrayMenu(newIP);
-          new Notification({
+          new Notification({ icon: NOTIFY_ICON,
             title: `${APP_NAME} — IP Updated`,
             body: `New IP: http://${newIP}:${PORT}\nUpdate your POS configuration.`,
           }).show();
         } else {
-          new Notification({
+          new Notification({ icon: NOTIFY_ICON,
             title: `${APP_NAME}`,
             body: `IP unchanged: http://${newIP}:${PORT}`,
           }).show();
@@ -480,8 +484,8 @@ function accMenuItems() {
       ? [{ label: `Last error: ${st.lastError.day} ${st.lastError.message}`.slice(0, 110), enabled: false }]
       : []),
     { type: "separator" },
-    { label: "Send Now", click: () => accSender().sync().finally(() => buildAndSetTrayMenu(currentIP)) },
-    { label: "Open ACC Folder", click: () => shell.openPath(accSender().folder()) },
+    { label: "Send Now", click: () => accSendNow("Checking for files to send…") },
+    { label: "Open ACC Folder", click: openAccFolder },
     { label: `ACC folder: ${accSender().folder()}`, enabled: false },
     { label: "Select ACC Folder", click: selectAccFolder },
     { label: "Paste ACC Setup Code", click: pasteAccSetupCode },
@@ -493,6 +497,7 @@ function accMenuItems() {
 function selectMall(mall) {
   if (mall === MALL) return;
   userConfig.mall = mall;
+  userConfig.mallSwitched = true; // confirmed by a notification after the restart
   saveUserConfig();
   log.info(`[Mall] switched to ${mall}; restarting`);
   app.relaunch();
@@ -507,13 +512,61 @@ async function selectAccFolder() {
       properties: ["openDirectory", "createDirectory"],
     });
     if (result.canceled || !result.filePaths.length) return;
-    userConfig.acc = { ...userConfig.acc, folder: result.filePaths[0] };
+    const folder = result.filePaths[0];
+    // Pollsys shares are often read-only for this PC; say so now, not at send time.
+    const probe = path.join(folder, `.utak-write-test-${Date.now()}`);
+    try {
+      fs.writeFileSync(probe, "");
+      fs.unlinkSync(probe);
+    } catch (err) {
+      log.warn(`[ACC] folder not writable: ${folder}: ${err.message}`);
+      dialog.showErrorBox(APP_NAME, `Can't save files to:\n${folder}\n\n${err.message}\n\nThe ACC folder was not changed.`);
+      return;
+    }
+    userConfig.acc = { ...userConfig.acc, folder };
     saveUserConfig();
     applyAccEnv();
+    log.info(`[ACC] folder set to ${folder}`);
+    accNotify(`ACC folder set to ${folder}`);
     buildAndSetTrayMenu(currentIP);
   } catch (err) {
     log.error("[ACC] folder select failed:", err);
+    dialog.showErrorBox(APP_NAME, `Selecting the ACC folder failed: ${err.message}`);
   }
+}
+
+function accNotify(body, isError = false) {
+  new Notification({ icon: NOTIFY_ICON, title: isError ? `${APP_NAME}: ACC problem` : `${APP_NAME}: ACC`, body }).show();
+}
+
+// Every manual send ends with a notification saying what happened.
+async function accSendNow(intro) {
+  if (!userConfig.acc?.uid) {
+    accNotify("Not set up yet. Copy the setup code from the Admin, then use Paste ACC Setup Code.", true);
+    return;
+  }
+  accNotify(intro);
+  try {
+    const { body, isError } = describeSync(await accSender().sync());
+    log.info(`[ACC] manual send: ${body}`);
+    accNotify(body, isError);
+  } catch (err) {
+    log.error("[ACC] manual send failed:", err);
+    accNotify(`Send failed: ${err.message}`, true);
+  } finally {
+    buildAndSetTrayMenu(currentIP);
+  }
+}
+
+async function openAccFolder() {
+  const folder = accSender().folder();
+  try {
+    fs.mkdirSync(folder, { recursive: true }); // nothing is sent until the first day closes
+  } catch (_) {
+    // openPath below reports the real problem
+  }
+  const err = await shell.openPath(folder);
+  if (err) accNotify(`Can't open ${folder}: ${err}`, true);
 }
 
 /**
@@ -532,10 +585,7 @@ function pasteAccSetupCode() {
     saveUserConfig();
     applyAccEnv();
     log.info(`[ACC] setup code saved for ${u}`);
-    new Notification({ title: APP_NAME, body: "ACC store set up. Checking for files to send…" }).show();
-    accSender()
-      .sync()
-      .finally(() => buildAndSetTrayMenu(currentIP));
+    accSendNow("ACC store set up. Checking for files to send…");
   } catch (err) {
     log.warn(`[ACC] invalid setup code: ${err.message}`);
     dialog.showErrorBox(
@@ -552,7 +602,7 @@ if (!gotTheLock) {
 } else {
   app.on("second-instance", () => {
     if (tray) {
-      new Notification({
+      new Notification({ icon: NOTIFY_ICON,
         title: `${APP_NAME}`,
         body: "Bridge is already running in the taskbar.",
       }).show();
@@ -599,6 +649,14 @@ if (!gotTheLock) {
       } else {
         tray = new Tray(iconPath);
         buildAndSetTrayMenu(currentIP);
+        if (userConfig.mallSwitched) {
+          delete userConfig.mallSwitched;
+          saveUserConfig();
+          new Notification({ icon: NOTIFY_ICON,
+            title: APP_NAME,
+            body: `Now running for ${MALL === "acc" ? "ACC (Alabang Town Center)" : "Ayala"}.`,
+          }).show();
+        }
 
         // Background watcher — checks for IP changes every 30 seconds
         ipWatcherInterval = setInterval(() => {
@@ -607,7 +665,7 @@ if (!gotTheLock) {
             log.info(`IP changed (auto-detected): ${currentIP} → ${newIP}`);
             currentIP = newIP;
             buildAndSetTrayMenu(newIP);
-            new Notification({
+            new Notification({ icon: NOTIFY_ICON,
               title: `${APP_NAME} — IP Changed`,
               body: `New IP: http://${newIP}:${PORT}\nUpdate your POS configuration.`,
             }).show();
@@ -627,12 +685,12 @@ if (!gotTheLock) {
     const runningVersion = app.getVersion();
     const previousVersion = userConfig.lastVersion;
     if (previousVersion && previousVersion !== runningVersion) {
-      new Notification({
+      new Notification({ icon: NOTIFY_ICON,
         title: `${APP_NAME} — Updated`,
         body: `Updated to v${runningVersion} (was v${previousVersion}). Running on http://${currentIP}:${PORT}`,
       }).show();
     } else {
-      new Notification({
+      new Notification({ icon: NOTIFY_ICON,
         title: `${APP_NAME} Started`,
         body: `Bridge is running on http://${currentIP}:${PORT}`,
       }).show();
