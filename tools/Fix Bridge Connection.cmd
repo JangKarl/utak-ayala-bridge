@@ -1,5 +1,5 @@
 @echo off
-title Ayala Bridge - Fix Connection
+title UTAK Mall Bridge - Fix Connection
 
 net session >nul 2>&1 && goto :run
 

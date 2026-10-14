@@ -1,4 +1,4 @@
-# Ayala Bridge — Project Guide
+# UTAK Mall Bridge (ayala-bridge) — Project Guide
 
 > Companion doc for AI agents and new contributors. Authoritative current
 > reference. (An older `.github/copilot-instructions.md` exists but is partly

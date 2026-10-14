@@ -1,4 +1,4 @@
-# Ayala Bridge
+# UTAK Mall Bridge
 
 A production Windows service that bridges Utak POS devices and Ayala's mall
 reporting system. POS devices push transaction / end-of-day data over the local
@@ -30,7 +30,7 @@ boot, and auto-updates over the air.
 ## Installation
 1. Download the installer from the releases page (or build it with `npm run build`).
 2. Run the installer and follow the prompts.
-3. Once installed, search for **Ayala Bridge** in the Start menu. It then keeps
+3. Once installed, search for **UTAK Mall Bridge** in the Start menu (PCs installed before v2.53 may still show the old name until their next update). It then keeps
    itself up to date automatically.
 
 ## Development

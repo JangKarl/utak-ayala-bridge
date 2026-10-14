@@ -1,5 +1,5 @@
 <#
-  Ayala Bridge - Fix Connection
+  UTAK Mall Bridge - Fix Connection
   Diagnoses and repairs why a POS tablet cannot reach this PC's bridge.
   Safe to re-run: a healthy setting is reported, never churned.
   Optional: -PosIp <tablet ip> to also test the tablet side.
@@ -72,7 +72,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 # ============================ 1. The bridge app ==============================
-Head "Ayala Bridge app"
+Head "UTAK Mall Bridge app"
 
 $proc = Get-Process -Name 'ayala-bridge' -ErrorAction SilentlyContinue |
   Where-Object { $_.Path } | Select-Object -First 1
@@ -100,8 +100,8 @@ Note 'OK' "Port $Port (from $portFrom)"
 $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)
 $listener = $listeners | Select-Object -First 1
 if (-not $listener) {
-  Note 'FAIL' "Nothing is listening on port $Port - the Ayala Bridge app is not running."
-  Write-Host "`n  ACTION: start Ayala Bridge from the desktop shortcut, then run this again." -ForegroundColor Red
+  Note 'FAIL' "Nothing is listening on port $Port - the UTAK Mall Bridge app is not running."
+  Write-Host "`n  ACTION: start UTAK Mall Bridge from the desktop shortcut, then run this again." -ForegroundColor Red
   try { Stop-Transcript | Out-Null } catch {}
   Read-Host "Press Enter to close" | Out-Null; exit 1
 }
@@ -120,7 +120,7 @@ else {
 $openBind = $listeners |
   Where-Object { $_.LocalAddress -notmatch '^(127\.|::1$)' } | Select-Object -First 1
 if (-not $openBind) {
-  Note 'FAIL' "Port $Port is bound to this PC only (loopback). No tablet can ever reach it - restart the Ayala Bridge app."
+  Note 'FAIL' "Port $Port is bound to this PC only (loopback). No tablet can ever reach it - restart the UTAK Mall Bridge app."
 }
 else {
   Note 'OK' "Port $Port is bound to $($openBind.LocalAddress) - open to the network"
@@ -430,7 +430,7 @@ try {
   Note 'OK' "Bridge answered /heartbeat with HTTP $($r.StatusCode)"
 }
 catch {
-  Note 'FAIL' "Bridge did not answer /heartbeat on ${MyIp}:$Port - restart the Ayala Bridge app."
+  Note 'FAIL' "Bridge did not answer /heartbeat on ${MyIp}:$Port - restart the UTAK Mall Bridge app."
 }
 
 # The /heartbeat above is this PC calling its own address, which never crosses an
@@ -532,7 +532,7 @@ if ($ThirdParty) {
 }
 
 Write-Host "`nNow set $MyIp in BOTH:" -ForegroundColor White
-Write-Host "  1. Ayala Bridge tray icon -> Bridge IP" -ForegroundColor White
+Write-Host "  1. UTAK Mall Bridge tray icon -> Bridge IP" -ForegroundColor White
 Write-Host "  2. The POS tablet -> Ayala settings -> IP address" -ForegroundColor White
 # This address is fixed on the PC, but the router does not know that and may hand
 # the same number to a new device once the old lease lapses. A reservation is the

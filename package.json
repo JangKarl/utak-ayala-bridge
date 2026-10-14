@@ -3,7 +3,7 @@
   "version": "2.52.12",
   "description": "Bridge for Ayala POS CSV generation",
   "main": "main.js",
-  "author": "Ayala Bridge Developer",
+  "author": "UTAK",
   "build": {
     "appId": "com.ayala.bridge",
     "artifactName": "ayala-bridge-Setup.${ext}",
@@ -35,9 +35,10 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Ayala Bridge",
+      "shortcutName": "UTAK Mall Bridge",
       "createDesktopShortcut": true,
-      "runAfterFinish": true
+      "runAfterFinish": true,
+      "uninstallDisplayName": "UTAK Mall Bridge"
     }
   },
   "scripts": {
