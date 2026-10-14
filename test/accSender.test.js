@@ -7,7 +7,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { AccStore } = require("../src/services/accStore.service");
-const { AccSender } = require("../src/services/accSender.service");
+const { AccSender, describeSync } = require("../src/services/accSender.service");
 
 const fixtures = path.join(__dirname, "fixtures", "acc");
 const day = JSON.parse(fs.readFileSync(path.join(fixtures, "day.json"), "utf8"));
@@ -157,4 +157,30 @@ test("a refund re-sent later replaces the earlier version of the sale", () => {
   const list = t.store.txnList(D);
   assert.strictEqual(list.length, 1);
   assert.strictEqual(list[0].val.receiptNo, first.val.receiptNo);
+});
+
+test("each sync reports what it did, in words the tray can show", async () => {
+  const t = setup();
+  feed(t.store);
+  const first = await t.sender.sync();
+  assert.deepStrictEqual(first.sent, ["05142601.csv"]);
+  assert.deepStrictEqual(describeSync(first), { body: "Sent 05142601.csv.", isError: false });
+  assert.match(describeSync(await t.sender.sync()).body, /^Nothing to send/);
+  t.goOnline(false);
+  assert.deepStrictEqual(describeSync(await t.sender.sync()), { body: "Cloud unreachable: offline.", isError: true });
+  assert.match(describeSync({ busy: true }).body, /Already sending/);
+});
+
+test("cloud lists a day again (lost ack or resend): writes the same file again", async () => {
+  const t = setup();
+  feed(t.store);
+  await t.sender.sync();
+  fs.rmSync(path.join(process.env.ACC_FOLDER, "05142601.csv")); // e.g. collected by Pollsys
+  const pending = t.sender.cloud.pending;
+  t.sender.cloud.pending = async () => ({ ...(await pending()), pending: [D] });
+  t.store.markSent(D, { ...t.store.day(D).sent, acked: true }); // deliver re-uses the CC
+  const again = await t.sender.sync();
+  assert.deepStrictEqual(again.sent, ["05142601.csv"]);
+  assert.deepStrictEqual(t.files(), ["05142601.csv"]);
+  assert.deepStrictEqual(t.calls.filter((c) => c[0] === "ack"), [["ack", D, 1, "cloud"], ["ack", D, 1, "cloud"]]);
 });

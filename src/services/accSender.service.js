@@ -48,9 +48,11 @@ class AccSender {
     log.info(`[ACC] wrote ${filename} to ${this.folder()}`);
   }
 
+  /** Runs one pass and returns what it did, for the tray's feedback. */
   async sync() {
-    if (this.running) return;
+    if (this.running) return { busy: true };
     this.running = true;
+    const report = (this.report = { sent: [], corrected: [], waiting: [], errors: [] });
     try {
       let cloud = null;
       try {
@@ -59,12 +61,16 @@ class AccSender {
         this.online = true;
       } catch (err) {
         this.online = false;
+        report.offline = err.message;
         log.warn(`[ACC] cloud unreachable: ${err.message}`);
       }
 
       if (cloud) {
+        // The cloud decides: a day it lists as unsent is written again (a lost
+        // ack, or support asked for a resend). Deliver keeps the CC, so it's
+        // the same file. Offline sends are checked below instead.
         for (const d of cloud.pending) {
-          if (this.store.day(d).sent) continue; // a local send, checked below
+          if (this.store.day(d).sent?.via === "local") continue;
           await this.guard(d, () => this.deliverFromCloud(d));
         }
         const closed = new Set(cloud.closed);
@@ -77,6 +83,7 @@ class AccSender {
         await this.guard(d, () => this.sendLocal(d));
       }
       this.store.prune(this.now());
+      return report;
     } finally {
       this.running = false;
       this.lastRunAt = this.now();
@@ -89,6 +96,7 @@ class AccSender {
       await fn();
     } catch (err) {
       this.lastError = { day: d, message: err.message, at: this.now() };
+      this.report.errors.push({ day: d, message: err.message });
       log.error(`[ACC] ${d}: ${err.message}`);
     }
   }
@@ -98,9 +106,11 @@ class AccSender {
     const held = this.store.txnList(d).length;
     if (f.txns < held) {
       log.info(`[ACC] ${d}: cloud has ${f.txns} sales, laptop ${held}; waiting for sync`);
+      this.report.waiting.push(d);
       return;
     }
     this.write(f.filename, f.content);
+    this.report.sent.push(f.filename);
     await this.cloud.ack(d, f.cc, "cloud");
     this.store.markSent(d, { cc: f.cc, via: "cloud", filename: f.filename, verified: true });
     this.store.setTotals(d, totalsFromCsv(f.content));
@@ -123,6 +133,7 @@ class AccSender {
       cc,
     });
     this.write(file.filename, file.content);
+    this.report.sent.push(file.filename);
     this.store.markSent(d, {
       cc,
       via: "local",
@@ -147,6 +158,7 @@ class AccSender {
     const f = await this.cloud.download(d, "deliver");
     if (f.txns < this.store.txnList(d).length) {
       log.info(`[ACC] ${d}: cloud not caught up yet; check later`);
+      this.report.waiting.push(d);
       return;
     }
     if (f.content === sent.content) {
@@ -156,6 +168,7 @@ class AccSender {
     }
     const g = await this.cloud.download(d, "regenerate");
     this.write(g.filename, g.content);
+    this.report.corrected.push(g.filename);
     await this.cloud.ack(d, g.cc, "cloud");
     this.store.markSent(d, {
       cc: g.cc,
@@ -180,6 +193,19 @@ class AccSender {
   }
 }
 
+/** One plain-language line per sync, for a tray notification. */
+function describeSync(r) {
+  if (r.busy) return { body: "Already sending. Try again in a minute." };
+  const parts = [];
+  if (r.sent.length) parts.push(`Sent ${r.sent.join(", ")}.`);
+  if (r.corrected.length) parts.push(`Sent corrections ${r.corrected.join(", ")}.`);
+  if (r.waiting.length) parts.push(`Waiting for the tablets to sync ${r.waiting.join(", ")}.`);
+  if (r.errors.length) parts.push(`Failed: ${r.errors.map((e) => `${e.day} (${e.message})`).join("; ")}.`);
+  if (r.offline) parts.push(`Cloud unreachable: ${r.offline}.`);
+  if (!parts.length) parts.push("Nothing to send. All closed days are already sent.");
+  return { body: parts.join(" "), isError: Boolean(r.errors.length || r.offline) };
+}
+
 let instance = null;
 function accSender() {
   if (!instance) {
@@ -191,4 +217,4 @@ function accSender() {
   return instance;
 }
 
-module.exports = { AccSender, accSender, totalsFromCsv };
+module.exports = { AccSender, accSender, totalsFromCsv, describeSync };
