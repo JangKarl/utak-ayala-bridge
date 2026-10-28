@@ -37,8 +37,12 @@ try {
 } catch (_) {
   // No config file yet — use defaults
 }
-if (userConfig.uploadsDir) {
-  process.env.UPLOADS_DIR = userConfig.uploadsDir;
+// Ayala's folder. The old "uploadsDir" key was ignored from v2.50.0 (a load-
+// order bug), so every PC has written to the default since; honoring it now
+// could move files away from where the mall collects them. New picks use
+// "ayalaFolder"; "uploadsDir" stays ignored and is only logged at startup.
+if (userConfig.ayalaFolder) {
+  process.env.UPLOADS_DIR = userConfig.ayalaFolder;
 }
 // Mall selector: unset means Ayala, so existing installs are unaffected.
 const MALL = userConfig.mall === "acc" ? "acc" : "ayala";
@@ -352,8 +356,8 @@ function ayalaMenuItems(localIP) {
       click: () => shell.openPath(UPLOADS_DIR),
     },
     {
-      label: userConfig.uploadsDir
-        ? `Dir: ${userConfig.uploadsDir}`
+      label: userConfig.ayalaFolder
+        ? `Dir: ${userConfig.ayalaFolder}`
         : "Dir: (default)",
       enabled: false,
     },
@@ -440,7 +444,6 @@ function accMenuItems() {
   ];
 }
 
-// Switching malls loads a different server and jobs, so restart.
 // The mall is picked once, on a fresh install's setup screen. A wrong switch
 // stops a store's files with the tray still saying Running, so only support
 // changes it: delete "mall" from config.json and restart (see CLAUDE.md).
@@ -571,7 +574,7 @@ async function chooseUploadsDir(parent) {
     }
     fs.writeFileSync(
       configPath,
-      JSON.stringify({ ...userConfig, uploadsDir: selectedDir }, null, 2),
+      JSON.stringify({ ...userConfig, ayalaFolder: selectedDir }, null, 2),
       "utf8",
     );
     new Notification({ icon: NOTIFY_ICON,
@@ -684,6 +687,9 @@ function openWindow() {
     }
   });
   win.on("closed", () => (win = null));
+  // Windows shutdown closes windows without before-quit; don't hold it up.
+  win.on("query-session-end", () => (app.isQuitting = true));
+  win.on("session-end", () => (app.isQuitting = true));
 }
 
 function uiState() {
@@ -875,9 +881,15 @@ if (!gotTheLock) {
     const previousVersion = userConfig.lastVersion;
     // A fresh install (no version recorded yet) starts with the setup screens.
     // Existing installs only open the window when ACC still needs its code.
-    if (!previousVersion) {
+    // lastVersion only exists since v2.51.0, so a tablet registry also marks
+    // an existing Ayala PC: it must never get the mall picker on update.
+    const hadTablets = fs.existsSync(path.join(TEMP_DIR, "terminal_registry.json"));
+    if (!previousVersion && !hadTablets) {
       userConfig.welcome = true;
       saveUserConfig();
+    }
+    if (userConfig.uploadsDir && userConfig.uploadsDir !== UPLOADS_DIR) {
+      log.warn(`[Config] old uploadsDir "${userConfig.uploadsDir}" ignored (as since v2.50.0); Ayala files stay in ${UPLOADS_DIR}`);
     }
     if (userConfig.welcome || (MALL === "acc" && !userConfig.acc?.uid)) openWindow();
     if (previousVersion && previousVersion !== runningVersion) {

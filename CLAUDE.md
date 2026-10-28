@@ -72,7 +72,9 @@ Ayala**: every PC installed before the selector keeps working unchanged.
 
 **It is locked after that.** The tray only shows the mall, and the window's
 `chooseMall` refuses. A wrong switch stops a store's files while the tray
-still says Running. PCs from before the selector (no `mall`, no `welcome`)
+still says Running. A fresh install is one with no `lastVersion` (saved since
+v2.51.0) **and** no `C:\UTAK\Temp\terminal_registry.json`, so an Ayala PC
+updating from an older build never gets the picker. PCs from before the selector (no `mall`, no `welcome`)
 count as locked to Ayala. Uninstalling does not reset it: `config.json` stays.
 
 **Support reset:** quit the bridge, delete the `"mall"` line from
@@ -168,7 +170,7 @@ services are **singletons** (`module.exports = new X()`).
 
 | Path | What |
 |---|---|
-| `C:\AYALA\tenant_api\storage\app\OUTGOING` | **`UPLOADS_DIR`** — the mall pickup folder. Only ever holds *final* CSV files. Overridable via tray "Select Directory" (persists `uploadsDir` → `UPLOADS_DIR`). |
+| `C:\AYALA\tenant_api\storage\app\OUTGOING` | **`UPLOADS_DIR`** — the mall pickup folder. Only ever holds *final* CSV files. Overridable via tray "Select Directory" or the window (persists `ayalaFolder` → `UPLOADS_DIR`, restart). The older `uploadsDir` key is deliberately ignored: a load-order bug ignored it from v2.50.0, so PCs that set it have written to the default ever since, and honoring it on update could move files away from the mall's pickup. |
 | `C:\UTAK\Temp` | **`TEMP_DIR`** — hourly draft temp files + the JSON state mirrors below. |
 | `C:\UTAK\Temp\.staging` | **`STAGING_DIR`** — in-progress reprocess rebuild (`EOD…` staging file + backed-up per-transaction files). Under TEMP so the mall never sees partial rebuilds. |
 | `…\TEMP_DIR\terminal_registry.json` | TER_NO → owner device map, per ccode. |
