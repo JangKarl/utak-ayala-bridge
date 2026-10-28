@@ -184,3 +184,18 @@ test("cloud lists a day again (lost ack or resend): writes the same file again",
   assert.deepStrictEqual(t.files(), ["05142601.csv"]);
   assert.deepStrictEqual(t.calls.filter((c) => c[0] === "ack"), [["ack", D, 1, "cloud"], ["ack", D, 1, "cloud"]]);
 });
+
+test("days() gives the window one status per day, newest first", async () => {
+  const t = setup({ cloudTxns: 4, closed: ["260513", D] });
+  feed(t.store);
+  await t.sender.sync();
+  assert.deepStrictEqual(
+    t.sender.days().map((r) => [r.day, r.status]),
+    [[D, "waiting"], ["260513", "sent"]],
+  );
+  t.advance(HOUR);
+  await t.sender.sync();
+  const [row] = t.sender.days(1);
+  assert.strictEqual(row.status, "offline");
+  assert.strictEqual(row.filename, "05142601.csv");
+});

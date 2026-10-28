@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<title>UTAK Mall Bridge</title>
+<style>
+/* Desktop utility window: a fixed header, one scrolling column, Windows-native type. */
+:root{
+  --bg:#f4f7f7; --surface:#ffffff; --fg:#14262b; --muted:#5b6f74; --line:#dbe4e5;
+  --brand:#4aa8ae; --brand-strong:#154854; --brand-soft:#e3f3f4; --on-brand:#ffffff;
+  --ok:#1d7a4c; --ok-bg:#e1f3e8; --warn:#8a5a00; --warn-bg:#fbefd6; --bad:#a8322b; --bad-bg:#f9e3e1; --idle:#5b6f74; --idle-bg:#eaeff0;
+  --display:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
+  --body:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  --mono:"Cascadia Mono",Consolas,ui-monospace,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#101a1d; --surface:#172428; --fg:#e3eced; --muted:#93a7ab; --line:#26383d;
+  --brand:#63bcc2; --brand-strong:#8fd3d8; --brand-soft:#16343a; --on-brand:#0c1a1d;
+  --ok:#7fd3a3; --ok-bg:#15301f; --warn:#f0c46a; --warn-bg:#33280f; --bad:#f19a92; --bad-bg:#3a1c1a; --idle:#93a7ab; --idle-bg:#1f2f33;
+  color-scheme:dark}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.5 var(--body);display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:12px;padding:14px 24px;background:var(--surface);border-bottom:1px solid var(--line)}
+header img{width:28px;height:28px}
+header h1{font:600 17px var(--display);margin:0}
+header .sub{color:var(--muted);font-size:12.5px;margin-left:auto;text-align:right}
+.theme{display:inline-flex;border:1px solid var(--line);border-radius:8px;padding:2px;gap:2px}
+.theme button{border:0;padding:4px 10px;font-size:12.5px;font-weight:600;color:var(--muted);background:transparent}
+.theme button[aria-pressed="true"]{background:var(--brand-soft);color:var(--fg)}
+main{flex:1;overflow:auto;padding:24px max(24px,calc((100% - 900px) / 2));display:flex;flex-direction:column;gap:20px}
+/* Wide or maximized: Ayala uses the whole screen, the trail stays beside the list. */
+@media (min-width:1200px){
+  main:has(#v-ayala:not([hidden])){padding-inline:max(32px,calc((100% - 1800px) / 2))}
+  #v-ayala:has(#ay-trail:not([hidden])){display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:20px;align-items:start}
+  #v-ayala>.card{grid-column:1}
+  #v-ayala>#ay-trail{grid-column:2;grid-row:1 / span 4;position:sticky;top:0;max-height:calc(100vh - 110px);overflow:auto}
+  #ay-trail>*{flex-shrink:0} /* the card scrolls, not the hour table inside it */
+}
+h2{font:600 20px var(--display);margin:0;text-wrap:balance}
+h3{font:600 14px var(--display);margin:0;letter-spacing:.02em;text-transform:uppercase;color:var(--muted)}
+p{margin:0;max-width:64ch}
+section{display:flex;flex-direction:column;gap:16px;min-width:0}
+.muted{color:var(--muted)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.spacer{flex:1}
+.mono{font-family:var(--mono);font-size:13px;overflow-wrap:anywhere}
+button{font:600 13.5px var(--body);border-radius:7px;padding:8px 14px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer}
+button:hover{border-color:var(--brand)}
+button:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+button.primary{background:var(--brand-strong);border-color:var(--brand-strong);color:#fff}
+@media (prefers-color-scheme: dark){button.primary{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}}
+button:disabled{opacity:.55;cursor:default}
+textarea{width:100%;min-height:72px;resize:vertical;font:13px var(--mono);padding:10px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+select{font:13.5px var(--body);padding:7px 10px;border-radius:7px;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;padding:2px 10px;border-radius:99px;white-space:nowrap}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.ok{color:var(--ok);background:var(--ok-bg)} .warn{color:var(--warn);background:var(--warn-bg)} .bad{color:var(--bad);background:var(--bad-bg)} .idle{color:var(--idle);background:var(--idle-bg)}
+.banner{border-radius:8px;padding:10px 14px;font-weight:600}
+.banner.ok,.banner.bad,.banner.warn{display:block}
+.choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.choice{text-align:left;padding:18px;display:flex;flex-direction:column;gap:6px;border-radius:10px;font-weight:400}
+.choice b{font:600 16px var(--display)}
+.choice.current{border-color:var(--brand);background:var(--brand-soft)}
+.steps{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--muted);font-size:13px;list-style:none;padding:0;margin:0}
+.steps li.done{color:var(--ok)} .steps li.now{color:var(--fg);font-weight:600}
+.big{font:600 26px var(--mono);letter-spacing:.01em;color:var(--brand-strong)}
+@media (prefers-color-scheme: dark){.big{color:var(--brand)}}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.stat{display:flex;flex-direction:column;gap:2px}
+.stat span{font-size:12px;color:var(--muted)}
+.tablebox{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:520px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--muted);font-weight:600}
+tr:last-child td{border-bottom:0}
+td .err{display:block;color:var(--bad);font-size:12.5px;margin-top:2px}
+td .hint{display:block;color:var(--muted);font-size:12.5px;margin-top:2px;max-width:42ch}
+td.num,th.num{text-align:right}
+h4{font:600 13.5px var(--display);margin:6px 0 0}
+td.day{white-space:nowrap}
+tbody th{font-size:13px;color:var(--fg);font-weight:400;white-space:nowrap}
+tr.picked td{background:var(--brand-soft)}
+button.view{padding:4px 12px;font-size:12.5px}
+button.view[aria-pressed="true"]{border-color:var(--brand);color:var(--brand-strong)}
+.empty{color:var(--muted);padding:6px 0}
+@media (prefers-reduced-motion: no-preference){button{transition:border-color .15s}}
+</style>
+</head>
+<body>
+<header>
+  <img src="../assets/icon.ico" alt="">
+  <h1>UTAK Mall Bridge</h1>
+  <div class="sub" id="hdr"></div>
+  <div class="theme" role="group" aria-label="Theme">
+    <button data-theme="system" title="Follow Windows">Auto</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button>
+  </div>
+</header>
+<main>
+
+  <!-- First run: which mall -->
+  <section id="v-mall" hidden>
+    <div class="card">
+      <h2>Which mall is this laptop for?</h2>
+      <p class="muted">The bridge sends this store's sales files to the mall. You can change this later from the tray menu. Changing it restarts the bridge.</p>
+      <div class="choices">
+        <button class="choice" data-mall="ayala"><b>Ayala Malls</b><span class="muted">POS tablets send each sale here; the bridge writes Ayala's files.</span></button>
+        <button class="choice" data-mall="acc"><b>Alabang Town Center (ACC)</b><span class="muted">The bridge saves each day's ACC sales file into the ACC folder.</span></button>
+      </div>
+      <div id="mall-msg" class="banner" hidden></div>
+    </div>
+  </section>
+
+  <!-- ACC setup -->
+  <section id="v-accsetup" hidden>
+    <ol class="steps" id="acc-steps"></ol>
+    <div class="card" id="s-code">
+      <h2>Paste the store's setup code</h2>
+      <p class="muted">In the UTAK Admin: Mall Config → this store → ACC → <b>Generate Bridge Key</b>. Copy the code it shows, then paste it here.</p>
+      <textarea id="code" spellcheck="false" placeholder="Setup code"></textarea>
+      <div class="row">
+        <button id="btn-paste">Paste from clipboard</button>
+        <button class="primary" id="btn-code">Save setup code</button>
+      </div>
+      <div id="code-msg" class="banner" hidden></div>
+    </div>
+    <div class="card" id="s-folder" hidden>
+      <h2>Choose the ACC folder</h2>
+      <p class="muted">The folder ACC's Pollsys collects from: <span class="mono">C:\ACC</span> on this laptop, or the shared folder ACC IT gave you (for example <span class="mono">\\server\share</span>). The bridge checks it can save files there.</p>
+      <div class="row"><span class="mono" id="folder-now"></span></div>
+      <div class="row">
+        <button id="btn-folder">Choose folder…</button>
+        <button class="primary" id="btn-folder-ok">Use this folder</button>
+      </div>
+      <div id="folder-msg" class="banner" hidden></div>
+    </div>
+  </section>
+
+  <!-- Ayala first run -->
+  <section id="v-ayalasetup" hidden>
+    <div class="card">
+      <h2>Point the POS tablets at this laptop</h2>
+      <p class="muted">On each POS: Ayala settings → Bridge IP. Enter this address. If this laptop has more than one network, pick the store Wi-Fi or LAN one.</p>
+      <div class="row"><div class="big" id="ay-addr"></div><button id="btn-copy">Copy</button></div>
+      <div class="row"><label for="ip-setup" class="muted">Network</label><select id="ip-setup"></select></div>
+      <div class="row" aria-live="polite"><span class="chip" id="ay-first"></span><span class="muted" id="ay-first-hint"></span></div>
+      <div class="row"><button class="primary" id="btn-ay-done">Done</button></div>
+    </div>
+  </section>
+
+  <!-- ACC status -->
+  <section id="v-acc" hidden>
+    <div class="card">
+      <div class="row">
+        <h2>ACC sales files</h2>
+        <span class="spacer"></span>
+        <button class="primary" id="btn-send">Send now</button>
+      </div>
+      <div id="send-msg" class="banner" hidden></div>
+      <div class="stats" id="acc-stats"></div>
+    </div>
+    <div class="card">
+      <h3>Last 7 days</h3>
+      <div class="tablebox"><table>
+        <thead><tr><th>Business day</th><th>Status</th><th>File</th><th>Sent</th></tr></thead>
+        <tbody id="days"></tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <h3>ACC folder</h3>
+      <div class="row"><span class="mono" id="acc-folder"></span></div>
+      <div class="row">
+        <button id="btn-open">Open folder</button>
+        <button id="btn-folder2">Change folder…</button>
+      </div>
+      <div id="folder2-msg" class="banner" hidden></div>
+    </div>
+    <div class="card">
+      <h3>Store setup code</h3>
+      <p class="muted">Replace it only when the Admin generated a new one (for example after replacing this laptop).</p>
+      <textarea id="code2" spellcheck="false" placeholder="New setup code"></textarea>
+      <div class="row"><button id="btn-paste2">Paste from clipboard</button><button id="btn-code2">Save new code</button></div>
+      <div id="code2-msg" class="banner" hidden></div>
+    </div>
+  </section>
+
+  <!-- Ayala status -->
+  <section id="v-ayala" hidden>
+    <div class="card">
+      <div class="row">
+        <h2>Ayala sales files</h2>
+        <span class="spacer"></span>
+        <span class="chip" id="ay-health"></span>
+      </div>
+      <div id="ay-alert" class="banner" hidden></div>
+      <div class="stats" id="ay-stats"></div>
+    </div>
+    <div class="card">
+      <h3>Last 7 days</h3>
+      <div class="tablebox"><table>
+        <thead id="ay-days-head"></thead>
+        <tbody id="ay-days"></tbody>
+      </table></div>
+    </div>
+    <div class="card" id="ay-trail" hidden>
+      <h3 id="trail-title"></h3>
+      <div class="stats" id="trail-stats"></div>
+      <h4>Sent each hour</h4>
+      <div class="tablebox"><table>
+        <thead><tr><th>Hour</th><th>Terminal</th><th class="num">Transactions</th><th>Receipts</th><th class="num">Sales</th><th>Sent</th></tr></thead>
+        <tbody id="trail-hours"></tbody>
+      </table></div>
+      <h4>End of day</h4>
+      <div id="trail-eod"></div>
+    </div>
+    <div class="card">
+      <h3>POS tablets</h3>
+      <div class="row"><span class="muted">Tablets connect to</span><span class="big" id="ay-addr2"></span><button id="btn-copy2">Copy</button></div>
+      <div class="row"><label for="ip-status" class="muted">Network</label><select id="ip-status"></select></div>
+      <div class="tablebox"><table>
+        <thead><tr><th>Status</th><th>Terminal</th><th>Device</th><th>Last seen</th></tr></thead>
+        <tbody id="devices"></tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <h3>Ayala files folder</h3>
+      <p class="muted">Ayala's tenant app collects the files from here. Change it only if Ayala IT told you to.</p>
+      <div class="row"><span class="mono" id="ay-folder"></span></div>
+      <div class="row"><button id="btn-open-ay">Open folder</button><button id="btn-folder-ay">Change folder…</button></div>
+      <div id="ay-folder-msg" class="banner" hidden></div>
+    </div>
+  </section>
+
+  <!-- Always: help -->
+  <section id="v-help" class="row" style="flex-direction:row" hidden>
+    <button id="btn-logs">View logs</button>
+    <button id="btn-fix">Fix connection</button>
+    <span class="spacer"></span>
+    <span class="muted" id="foot"></span>
+  </section>
+
+</main>
+<script src="app.js"></script>
+</body>
+</html>

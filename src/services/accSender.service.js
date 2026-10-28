@@ -53,6 +53,7 @@ class AccSender {
     if (this.running) return { busy: true };
     this.running = true;
     const report = (this.report = { sent: [], corrected: [], waiting: [], errors: [] });
+    const startedAt = this.now();
     try {
       let cloud = null;
       try {
@@ -83,6 +84,15 @@ class AccSender {
         await this.guard(d, () => this.sendLocal(d));
       }
       this.store.prune(this.now());
+      if (cloud) {
+        // pending was fetched before this run's sends; drop what just went out.
+        const days = this.store.state.days;
+        this.lastCloud = {
+          pending: cloud.pending.filter((d) => !(days[d]?.sent?.at >= startedAt)),
+          closed: cloud.closed,
+        };
+      }
+      this.lastReport = report;
       return report;
     } finally {
       this.running = false;
@@ -181,6 +191,48 @@ class AccSender {
     log.warn(`[ACC] ${d}: offline file differed; sent correction ${g.filename}`);
   }
 
+  /**
+   * The last n business days, newest first, each with one status for the
+   * window: sent | corrected | offline (sent, awaiting the cloud check) |
+   * queued (cloud lists it unsent) | waiting (tablets not synced) | failed |
+   * closed (tablets closed it; the laptop sends at dueAt if the cloud can't).
+   */
+  days(n = 7) {
+    const cloud = this.lastCloud || { pending: [], closed: [] };
+    const report = this.lastReport || { waiting: [], errors: [] };
+    const local = this.store.state.days; // read directly: store.day() creates entries
+    const seen = Object.keys(local).filter(
+      (d) => local[d].sent || Object.keys(local[d].closes || {}).length,
+    );
+    return [...new Set([...cloud.closed, ...seen])]
+      .sort()
+      .reverse()
+      .slice(0, n)
+      .map((d) => {
+        const sent = local[d]?.sent;
+        const error = report.errors.find((e) => e.day === d);
+        const queued = cloud.pending.includes(d);
+        let status = "closed";
+        if (error) status = "failed";
+        else if (sent?.via === "local" && !sent.verified) status = "offline";
+        else if (sent && !queued) status = sent.corrected ? "corrected" : "sent";
+        // The cloud's record wins: sent from another laptop, a manual download, or before a reset.
+        else if (!sent && !queued && cloud.closed.includes(d)) status = "sent";
+        else if (report.waiting.includes(d)) status = "waiting";
+        else if (queued) status = "queued";
+        const closedAt = Math.max(0, ...Object.values(local[d]?.closes || {}).map((c) => c.at));
+        return {
+          day: d,
+          status,
+          filename: sent?.filename || null,
+          via: sent?.via || null,
+          at: sent?.at || null,
+          error: error?.message || null,
+          dueAt: status === "closed" && closedAt ? closedAt + this.deadlineMs() : null,
+        };
+      });
+  }
+
   status() {
     return {
       online: this.online,
@@ -189,6 +241,7 @@ class AccSender {
       lastSent: this.store.lastSent(),
       lastError: this.lastError,
       unchecked: this.store.unverifiedLocalDays(),
+      posCode: this.store.state.config?.posCode || null,
     };
   }
 }

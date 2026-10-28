@@ -321,6 +321,20 @@ finalize window is 5 min.
   it via `ENDPOINT(mode)`. The IP watcher notifies on change.
 - Don't write anything non-final into `UPLOADS_DIR` — staging/backups belong in
   `STAGING_DIR`.
+- **Load order:** `constants/ayala.js` reads `UPLOADS_DIR` and `PORT` once, at
+  first require. In `main.js`, nothing that pulls it in may be required before
+  `.env` and `config.json` are applied, or the chosen folder/port is ignored.
+
+## Window (`ui/`)
+
+Tray click or reopening the shortcut shows one window; closing hides it to the
+tray. `ui/app.js` renders `uiState()` from `main.js` and calls `uiActions`
+through `ui/preload.js` (`window.bridge(action, arg)`, our window only).
+- **Ayala:** first-run address screen that turns green when a tablet connects;
+  status with the last 7 business days per store, read from `UPLOADS_DIR` by
+  `src/services/ayalaDays.service.js` (closed / missing a terminal / no end of
+  day / re-sending / open), tablets, copy address, open or change the folder.
+- **ACC:** mall choice, setup code, folder, last 7 days, Send now.
 
 ## Field Support Tools (`tools/`)
 
