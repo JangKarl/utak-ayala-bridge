@@ -257,23 +257,13 @@ function applyUpdateIfSafe({ manual }) {
 function buildAndSetTrayMenu(localIP) {
   if (!tray) return;
 
-  const mallItems = [
-    { label: "Ayala", value: "ayala" },
-    { label: "Rockwell / ATC (ACC file)", value: "acc" },
-  ].map(({ label, value }) => ({
-    label,
-    type: "radio",
-    checked: MALL === value,
-    click: () => selectMall(value),
-  }));
-
   const contextMenu = Menu.buildFromTemplate([
     {
       label: `${APP_NAME} v${app.getVersion()}${userConfig.betaUpdates ? " (beta)" : ""} - Running`,
       enabled: false,
     },
     { label: `Open ${APP_NAME}`, click: openWindow },
-    { label: `Mall: ${MALL_NAME}`, submenu: mallItems },
+    { label: `Mall: ${MALL_NAME}`, enabled: false },
     { type: "separator" },
     ...(MALL === "acc" ? accMenuItems() : ayalaMenuItems(localIP)),
     { label: "View Logs", click: openLogs },
@@ -451,6 +441,12 @@ function accMenuItems() {
 }
 
 // Switching malls loads a different server and jobs, so restart.
+// The mall is picked once, on a fresh install's setup screen. A wrong switch
+// stops a store's files with the tray still saying Running, so only support
+// changes it: delete "mall" from config.json and restart (see CLAUDE.md).
+// PCs from before the selector have no "mall" and no welcome: Ayala, locked.
+const mallLocked = () => !!userConfig.mall || !userConfig.welcome;
+
 function selectMall(mall) {
   if (mall === MALL) return;
   userConfig.mall = mall;
@@ -735,6 +731,7 @@ const uiActions = {
   state: () => uiState(),
   chooseMall: (mall) => {
     if (mall !== "acc" && mall !== "ayala") return { ok: false, message: "Unknown mall." };
+    if (mallLocked()) return { ok: false, message: "The mall is already set. Only UTAK support can change it." };
     if (mall === MALL) {
       userConfig.mall = mall;
       saveUserConfig();

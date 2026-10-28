@@ -252,13 +252,27 @@ const refresh = async () => {
 };
 
 // Actions
-document.querySelectorAll(".choice").forEach((b) =>
-  b.addEventListener("click", async () => {
-    if (b.dataset.mall !== state.mall) banner("mall-msg", { ok: true, message: "Restarting the bridge for this mall…" });
-    await call("chooseMall", b.dataset.mall);
-    refresh();
-  }),
-);
+// Picking a mall is final, so it takes a second, explicit Confirm.
+let pendingMall = null;
+const showMallConfirm = (b) => {
+  pendingMall = b?.dataset.mall || null;
+  $("mall-choices").hidden = !!b;
+  $("mall-confirm").hidden = !b;
+  if (b) {
+    $("mall-confirm-text").textContent = `This laptop will send to ${b.dataset.name}.`;
+    $("btn-mall-ok").focus();
+  }
+};
+document.querySelectorAll(".choice").forEach((b) => b.addEventListener("click", () => showMallConfirm(b)));
+$("btn-mall-back").addEventListener("click", () => showMallConfirm(null));
+$("btn-mall-ok").addEventListener("click", async () => {
+  $("btn-mall-ok").disabled = true;
+  if (pendingMall !== state.mall) banner("mall-msg", { ok: true, message: "Restarting the bridge for this mall…" });
+  const r = await call("chooseMall", pendingMall);
+  $("btn-mall-ok").disabled = false;
+  if (r?.ok === false) banner("mall-msg", r);
+  refresh();
+});
 
 async function saveCode(input, msgId, next) {
   const text = $(input).value.trim();

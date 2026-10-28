@@ -66,6 +66,7 @@ select{font:13.5px var(--body);padding:7px 10px;border-radius:7px;border:1px sol
 .choice{text-align:left;padding:18px;display:flex;flex-direction:column;gap:6px;border-radius:10px;font-weight:400}
 .choice b{font:600 16px var(--display)}
 .choice.current{border-color:var(--brand);background:var(--brand-soft)}
+.confirm{display:flex;flex-direction:column;gap:8px;padding:16px 18px;border:1px solid var(--brand);border-radius:10px;background:var(--brand-soft)}
 .steps{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--muted);font-size:13px;list-style:none;padding:0;margin:0}
 .steps li.done{color:var(--ok)} .steps li.now{color:var(--fg);font-weight:600}
 .big{font:600 26px var(--mono);letter-spacing:.01em;color:var(--brand-strong)}
@@ -106,10 +107,15 @@ button.view[aria-pressed="true"]{border-color:var(--brand);color:var(--brand-str
   <section id="v-mall" hidden>
     <div class="card">
       <h2>Which mall is this laptop for?</h2>
-      <p class="muted">The bridge sends this store's sales files to the mall. You can change this later from the tray menu. Changing it restarts the bridge.</p>
-      <div class="choices">
-        <button class="choice" data-mall="ayala"><b>Ayala Malls</b><span class="muted">POS tablets send each sale here; the bridge writes Ayala's files.</span></button>
-        <button class="choice" data-mall="acc"><b>Rockwell / Alabang Town Center</b><span class="muted">The bridge saves each day's ACC sales file (CSV) into the mall's shared folder.</span></button>
+      <p class="muted">The bridge sends this store's sales files to the mall. Pick carefully: once set, only UTAK support can change it.</p>
+      <div class="choices" id="mall-choices">
+        <button class="choice" data-mall="ayala" data-name="Ayala"><b>Ayala Malls</b><span class="muted">POS tablets send each sale here; the bridge writes Ayala's files.</span></button>
+        <button class="choice" data-mall="acc" data-name="Rockwell"><b>Rockwell / Alabang Town Center</b><span class="muted">The bridge saves each day's ACC sales file (CSV) into the mall's shared folder.</span></button>
+      </div>
+      <div class="confirm" id="mall-confirm" hidden>
+        <p><b id="mall-confirm-text"></b></p>
+        <p class="muted">Only UTAK support can change this later. If this laptop is for a different mall, go back now.</p>
+        <div class="row"><button id="btn-mall-back">Back</button><button class="primary" id="btn-mall-ok">Confirm</button></div>
       </div>
       <div id="mall-msg" class="banner" hidden></div>
     </div>

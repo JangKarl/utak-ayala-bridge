@@ -65,9 +65,20 @@ build fails.
 
 ## Mall Selector (Ayala / ACC)
 
-One app serves both malls. Tray → **Mall** sets `mall` in `config.json`;
+One app serves both malls. The mall is picked **once**, on a fresh install's
+setup screen (with a Confirm step), and saved as `mall` in `config.json`;
 `main.js` passes it as `BRIDGE_MALL` and **restarts** on change. **Unset means
 Ayala**: every PC installed before the selector keeps working unchanged.
+
+**It is locked after that.** The tray only shows the mall, and the window's
+`chooseMall` refuses. A wrong switch stops a store's files while the tray
+still says Running. PCs from before the selector (no `mall`, no `welcome`)
+count as locked to Ayala. Uninstalling does not reset it: `config.json` stays.
+
+**Support reset:** quit the bridge, delete the `"mall"` line from
+`%APPDATA%\ayala-bridge\config.json`, add `"welcome": true`, start it again.
+The setup screen asks for the mall. For testing both modes on one PC, run a
+second profile instead: `npx electron . --user-data-dir=<folder>`.
 `bridge.js` loads only the selected mall's routes and jobs (Ayala's services
 hydrate state and create `C:\AYALA` folders at require time).
 
