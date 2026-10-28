@@ -109,7 +109,7 @@ button.view[aria-pressed="true"]{border-color:var(--brand);color:var(--brand-str
       <p class="muted">The bridge sends this store's sales files to the mall. You can change this later from the tray menu. Changing it restarts the bridge.</p>
       <div class="choices">
         <button class="choice" data-mall="ayala"><b>Ayala Malls</b><span class="muted">POS tablets send each sale here; the bridge writes Ayala's files.</span></button>
-        <button class="choice" data-mall="acc"><b>Alabang Town Center (ACC)</b><span class="muted">The bridge saves each day's ACC sales file into the ACC folder.</span></button>
+        <button class="choice" data-mall="acc"><b>Rockwell / Alabang Town Center</b><span class="muted">The bridge saves each day's ACC sales file (CSV) into the mall's shared folder.</span></button>
       </div>
       <div id="mall-msg" class="banner" hidden></div>
     </div>
@@ -130,7 +130,7 @@ button.view[aria-pressed="true"]{border-color:var(--brand);color:var(--brand-str
     </div>
     <div class="card" id="s-folder" hidden>
       <h2>Choose the ACC folder</h2>
-      <p class="muted">The folder ACC's Pollsys collects from: <span class="mono">C:\ACC</span> on this laptop, or the shared folder ACC IT gave you (for example <span class="mono">\\server\share</span>). The bridge checks it can save files there.</p>
+      <p class="muted">The folder the mall collects from: <span class="mono">C:\ACC</span> on this laptop, or the shared folder the mall's IT gave you (for example <span class="mono">\\server\share</span>). The bridge checks it can save files there.</p>
       <div class="row"><span class="mono" id="folder-now"></span></div>
       <div class="row">
         <button id="btn-folder">Choose folder…</button>
@@ -156,7 +156,7 @@ button.view[aria-pressed="true"]{border-color:var(--brand);color:var(--brand-str
   <section id="v-acc" hidden>
     <div class="card">
       <div class="row">
-        <h2>ACC sales files</h2>
+        <h2>Rockwell sales files</h2>
         <span class="spacer"></span>
         <button class="primary" id="btn-send">Send now</button>
       </div>

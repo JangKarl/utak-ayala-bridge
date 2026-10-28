@@ -210,7 +210,7 @@ function renderAyalaFirst(y) {
 
 function render(s) {
   state = s;
-  const mallName = s.mall === "acc" ? "ACC" : "Ayala";
+  const mallName = s.mall === "acc" ? "Rockwell" : "Ayala";
   $("hdr").textContent = `${mallName} · v${s.version}${s.beta ? " beta" : ""}${s.updateReady ? ` · update v${s.updateReady} ready` : ""}`;
   $("foot").textContent = `Bridge running on ${s.bridgeIp}:${s.port}`;
   const addr = `${s.bridgeIp}:${s.port}`;

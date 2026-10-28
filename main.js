@@ -42,6 +42,8 @@ if (userConfig.uploadsDir) {
 }
 // Mall selector: unset means Ayala, so existing installs are unaffected.
 const MALL = userConfig.mall === "acc" ? "acc" : "ayala";
+// "acc" stays the setting; stores see the mall's name. ACC names the file.
+const MALL_NAME = MALL === "acc" ? "Rockwell" : "Ayala";
 process.env.BRIDGE_MALL = MALL;
 applyAccEnv();
 
@@ -257,7 +259,7 @@ function buildAndSetTrayMenu(localIP) {
 
   const mallItems = [
     { label: "Ayala", value: "ayala" },
-    { label: "ACC (Alabang Town Center)", value: "acc" },
+    { label: "Rockwell / ATC (ACC file)", value: "acc" },
   ].map(({ label, value }) => ({
     label,
     type: "radio",
@@ -271,7 +273,7 @@ function buildAndSetTrayMenu(localIP) {
       enabled: false,
     },
     { label: `Open ${APP_NAME}`, click: openWindow },
-    { label: `Mall: ${MALL === "acc" ? "ACC" : "Ayala"}`, submenu: mallItems },
+    { label: `Mall: ${MALL_NAME}`, submenu: mallItems },
     { type: "separator" },
     ...(MALL === "acc" ? accMenuItems() : ayalaMenuItems(localIP)),
     { label: "View Logs", click: openLogs },
@@ -330,7 +332,7 @@ function buildAndSetTrayMenu(localIP) {
     },
   ]);
 
-  tray.setToolTip(`${APP_NAME} (${MALL === "acc" ? "ACC" : "Ayala"})`);
+  tray.setToolTip(`${APP_NAME} (${MALL_NAME})`);
   tray.setContextMenu(contextMenu);
 }
 
@@ -843,7 +845,7 @@ if (!gotTheLock) {
           saveUserConfig();
           new Notification({ icon: NOTIFY_ICON,
             title: APP_NAME,
-            body: `Now running for ${MALL === "acc" ? "ACC (Alabang Town Center)" : "Ayala"}.`,
+            body: `Now running for ${MALL_NAME}.`,
           }).show();
           openWindow();
         }

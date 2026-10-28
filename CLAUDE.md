@@ -74,7 +74,11 @@ hydrate state and create `C:\AYALA` folders at require time).
 The visible name is **UTAK Mall Bridge**. `appId`, package name, install folder
 and `%APPDATA%\ayala-bridge` stay as they were: renaming them breaks OTA updates.
 
-## ACC Mode (Alabang Town Center)
+## ACC Mode (Rockwell / Alabang Town Center)
+
+Shown to stores as **Rockwell**: Rockwell's malls now require this ACC CSV
+file. The `acc` setting, routes and env names stay as they are, so existing
+ATC installs keep working; only the visible labels changed.
 
 ACC wants one CSV per business day, `MMDDYYCC.csv`, in a shared folder that
 ACC's Pollsys collects. Two paths keep it on time and correct:
