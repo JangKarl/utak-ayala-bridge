@@ -14,10 +14,15 @@
  * `version` / `releasedAt` change between releases.
  *
  * Targets:
- *   (default)      -> DEV only (utakdev2). Safe + the CLI login has write access.
+ *   (default)      -> DEV only. Safe + the CLI login has write access.
  *   --prod         -> DEV + PROD (posfire-8d2cb). Needs a CLI account with write
  *                     access to prod RTDB (most maintainer logins do NOT).
  *   --only-prod    -> PROD only.
+ *
+ * DEV comes from DEV_FIREBASE_PROJECT (and optional DEV_FIREBASE_INSTANCE,
+ * default "<project>-default-rtdb") in electron-builder.env, which is
+ * gitignored: a maintainer's dev project never lands in this public repo.
+ * Unset -> the dev write is skipped.
  *
  * PROD note: in normal operation prod's config/ayalaBridge is set by an admin
  * through the back-office "Ayala Settings" UI (authenticated write, governed by
@@ -40,17 +45,30 @@ if (pkg.version.includes("-")) {
 const REPO = "JangKarl/utak-ayala-bridge";
 const ARTIFACT = "ayala-bridge-Setup.exe"; // must match build.artifactName
 
-const TARGETS = {
-  prod: { project: "posfire-8d2cb", instance: "posfire-8d2cb" },
-  dev: { project: "utakdev2", instance: "utakdev2-default-rtdb" },
-};
+// Only the two DEV_* keys are read; the GH_TOKEN beside them is left alone.
+let local = {};
+try {
+  local = require("dotenv").parse(fs.readFileSync(path.join(__dirname, "..", "electron-builder.env")));
+} catch (_) {
+  // No electron-builder.env: no dev target.
+}
+const DEV = local.DEV_FIREBASE_PROJECT
+  ? {
+      project: local.DEV_FIREBASE_PROJECT,
+      instance: local.DEV_FIREBASE_INSTANCE || `${local.DEV_FIREBASE_PROJECT}-default-rtdb`,
+    }
+  : null;
+const PROD = { project: "posfire-8d2cb", instance: "posfire-8d2cb" };
 
 const args = process.argv.slice(2);
 const targets = args.includes("--only-prod")
-  ? [TARGETS.prod]
+  ? [PROD]
   : args.includes("--prod")
-    ? [TARGETS.dev, TARGETS.prod]
-    : [TARGETS.dev]; // default: dev only
+    ? [DEV, PROD].filter(Boolean)
+    : [DEV].filter(Boolean); // default: dev only
+if (!DEV && !args.includes("--only-prod")) {
+  console.log("[sync] DEV_FIREBASE_PROJECT not set in electron-builder.env; dev write skipped.");
+}
 
 const config = {
   version: pkg.version,
