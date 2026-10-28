@@ -11,8 +11,6 @@ const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
 const log = require("electron-log");
-const terminalRegistryService = require("./src/services/terminalRegistry.service");
-const reprocessStateService = require("./src/services/reprocessState.service");
 
 // Resolve .env path explicitly — avoids process.cwd() issues when launched
 // via auto-start, scheduler, or shortcuts (CWD may be C:\Windows\System32).
@@ -59,6 +57,10 @@ function applyAccEnv() {
   }
 }
 
+// Required only now: constants/ayala.js reads UPLOADS_DIR and PORT once, at
+// first load, so the .env and config.json values above must be set first.
+const terminalRegistryService = require("./src/services/terminalRegistry.service");
+const reprocessStateService = require("./src/services/reprocessState.service");
 const {
   startServer,
   restartJobs,
