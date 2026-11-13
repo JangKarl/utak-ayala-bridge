@@ -1,6 +1,6 @@
 # Ayala Bridge v2.53.0-beta.1 — paired, encrypted connection to the POS, and a window that shows what the bridge did
 
-Until now any device on the store network could send sales to the bridge over plain HTTP, and the only way to see what the bridge was doing was the tray menu and the log file. This beta adds a secure, paired connection for the new POS (2.49) and a window that shows each day's files. It is a **beta**: only PCs with **Beta updates** ticked in the tray receive it. Old POS keep working unchanged, and nothing about how files are generated, consolidated or collected by the mall has changed.
+Until now any device on the store network could send sales to the bridge over plain HTTP, and the only way to see what the bridge was doing was the tray menu and the log file. This beta adds a secure, paired connection for the new POS (2.49) and a window that shows each day's files. It is a **beta**: stores do not receive it automatically. A pilot store installs it by hand from this release. Old POS keep working unchanged, and nothing about how files are generated, consolidated or collected by the mall has changed.
 
 ## What's new
 
@@ -10,7 +10,7 @@ Until now any device on the store network could send sales to the bridge over pl
 
 - **A window that shows what the bridge did.** Click the tray icon (or open the shortcut again) to see the last 7 business days: closed, missing a terminal, no end of day, re-sending or open, each with what to do. Open a day to see every hourly file sent (transactions, receipts, sales, time), the hour still collecting, and the end-of-day totals per terminal. It also lists the tablets and the files folder, and has **Pair a POS**. Closing the window hides it; the bridge keeps running.
 
-- **Beta updates.** A tray checkbox, **Beta updates (pilot stores only)**, lets a pilot store receive pre-releases like this one first. When the stable version ships, beta PCs move to it automatically.
+- **Beta updates.** A new tray checkbox, **Beta updates (pilot stores only)**, lets a store that is already on this beta receive later betas automatically. Earlier versions do not have it, so the first beta is always installed by hand. When the stable version ships, beta PCs move to it automatically.
 
 ## What's fixed
 
@@ -18,7 +18,7 @@ Until now any device on the store network could send sales to the bridge over pl
 
 ## Operator actions
 
-1. **Pilot stores only:** tick **Beta updates** in the tray, then **Check for Updates**.
+1. **Pilot stores only:** quit the bridge from the tray, download `ayala-bridge-Setup.exe` from this release and install it over the current bridge. Settings and the bridge IP are kept. After it starts, tick **Beta updates** in the tray so later betas arrive by themselves.
 2. On each POS on 2.49: in the bridge, **Pair a POS** → enter the store code → on the POS, **Ayala settings → Secure Bridge** → scan the QR code or type the code. The POS shows online in the window once it connects.
 3. Leave **Allow old POS** on until every POS in the store is paired. Then turn it off.
 4. If a paired POS cannot connect, run **Fix Connection**. It opens port 3843 in Windows Firewall; a store that only allowed port 3800 needs this once.
