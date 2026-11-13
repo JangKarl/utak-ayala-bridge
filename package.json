@@ -1,6 +1,6 @@
 {
   "name": "ayala-bridge",
-  "version": "2.52.12",
+  "version": "2.53.0-beta.1",
   "description": "Bridge for Ayala POS CSV generation",
   "main": "main.js",
   "author": "Ayala Bridge Developer",
@@ -45,6 +45,7 @@
     "dev": "electron .",
     "build": "electron-builder --win",
     "publish": "electron-builder --win --publish always && node scripts/sync-release-config.js",
+    "publish:beta": "electron-builder --win --publish always -c.publish.releaseType=prerelease",
     "test": "node --test test/"
   },
   "keywords": [

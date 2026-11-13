@@ -56,6 +56,18 @@ use a broad classic `repo` token, and never put the token in `.env` (which is a
 runtime config file). Installed clients download in the background and install
 when the bridge is idle (see the updater guards in `main.js`).
 
+**Beta releases:** set a pre-release version (e.g. `2.53.0-beta.1`) and run
+`npm run publish:beta`. Only PCs with tray → **Beta updates** on
+(`betaUpdates` in `config.json` → `autoUpdater.allowPrerelease`) install it.
+`sync-release-config.js` skips pre-releases, so the Back Office keeps pointing
+at the stable build. Promote by publishing the same code as `2.53.0` with
+`npm run publish`; beta PCs move to it because `2.53.0` > `2.53.0-beta.x`.
+
+**Window:** `ui/` is the setup and status window (last 7 business days from the
+pickup folder, each day's hourly/EOD trail, tablets, folder). It opens on a
+fresh install, from a tray click, or when the shortcut is opened again; closing
+hides it to the tray. It reaches `main.js` only through `uiActions`.
+
 **Build gotcha:** `assets/icon.ico` must contain a 256×256 layer or the NSIS
 build fails.
 
