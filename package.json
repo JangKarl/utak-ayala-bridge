@@ -42,7 +42,7 @@
   },
   "scripts": {
     "start": "electron .",
-    "dev": "node -e \"require('./bridge').startServer()\"",
+    "dev": "electron .",
     "build": "electron-builder --win",
     "publish": "electron-builder --win --publish always && node scripts/sync-release-config.js",
     "test": "node --test test/"
@@ -62,7 +62,8 @@
     "express-validator": "^7.2.1",
     "moment-timezone": "^0.6.3",
     "multer": "^2.0.2",
-    "node-cron": "^4.2.1"
+    "node-cron": "^4.2.1",
+    "qrcode": "1.5.4"
   },
   "devDependencies": {
     "electron": "^34.0.0",
